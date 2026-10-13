@@ -1,0 +1,107 @@
+{
+  "name": "Subflow - Cargar Configuracion Hotel (1 Request)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "hotel_id"
+            },
+            {
+              "name": "periodo"
+            },
+            {
+              "name": "fecha_inicio"
+            },
+            {
+              "name": "spreadsheet_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -6576,
+        1152
+      ],
+      "name": "Start",
+      "id": "967c1341-437b-48e7-aa39-d0d3c5db2be7"
+    },
+    {
+      "parameters": {
+        "url": "=https://sheets.googleapis.com/v4/spreadsheets/{{ $('Start').first().json?.spreadsheet_id || '1Pe5JUT2tpAW5Oa0TyHiSi2rFrUy2PR42XQcAvfiJt40' }}/values:batchGet?ranges=hotel_config!A:B&ranges=reglas_umbrales!A:F&ranges=factores_segmentacion!A:C&ranges=modelo_schema!A:D",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6352,
+        1152
+      ],
+      "name": "BatchGet Google Sheets",
+      "id": "54dd05fb-3970-4959-ae24-83820022d69d",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SbMRbY1HcH584MnQ",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.item.json;\nconst valueRanges = res.valueRanges || [];\n\n// 1. Fecha de hoy local en formato YYYY-MM-DD\nconst ahora = new Date();\nconst anio = ahora.getFullYear();\nconst mes = String(ahora.getMonth() + 1).padStart(2, '0');\nconst dia = String(ahora.getDate()).padStart(2, '0');\nconst fechaHoy = `${anio}-${mes}-${dia}`;\n\n// 2. Limpieza y parseo de numeros con coma o punto\nfunction parseNum(val, defaultVal = undefined) {\n  if (val === undefined || val === null || val === '') return defaultVal;\n  const clean = String(val).replace(',', '.').trim();\n  const num = Number(clean);\n  return isNaN(num) ? defaultVal : num;\n}\n\nfunction sheetToObjects(values) {\n  if (!values || values.length < 2) return [];\n  const headers = values[0].map(h => (h || '').toString().trim());\n  return values.slice(1).map(row => {\n    const obj = {};\n    headers.forEach((h, idx) => {\n      obj[h] = row[idx] !== undefined ? String(row[idx]).trim() : '';\n    });\n    return obj;\n  });\n}\n\n// 3. Extraer los rangos devueltos por batchGet\nconst cfgValues = valueRanges.find(r => r.range && r.range.includes('hotel_config'))?.values || [];\nconst reglasValues = valueRanges.find(r => r.range && r.range.includes('reglas_umbrales'))?.values || [];\nconst factoresValues = valueRanges.find(r => r.range && r.range.includes('factores_segmentacion'))?.values || [];\nconst schemaValues = valueRanges.find(r => r.range && r.range.includes('modelo_schema'))?.values || [];\n\nconst cfgRows = sheetToObjects(cfgValues);\nconst filasReglas = sheetToObjects(reglasValues);\nconst filasFactores = sheetToObjects(factoresValues);\nconst filasSchema = sheetToObjects(schemaValues);\n\nif (filasSchema.length === 0) {\n  throw new Error(\"[VALIDACION CRITICA]: No se encontro o esta vacia la pestana 'modelo_schema' en Google Sheets.\");\n}\n\n// 4. Parsear hotel_config\nconst cfg = {};\ncfgRows.forEach(r => {\n  if (r.parametro) cfg[r.parametro] = r.valor;\n});\n\n// 5. Parsear reglas y factores soportando decimales con coma\nconst tablas_pricing = {\n  reglas_ocupacion: [],\n  factor_ocupacion: [],\n  reglas_pace: [],\n  factor_pace: [],\n  reglas_revpar: [],\n  reglas_pickup: [],\n  reglas_riesgo: [],\n  factores_canal: {},\n  factores_tipo: {},\n  factores_pais: {}\n};\n\nfilasReglas.forEach(r => {\n  const min = parseNum(r.min);\n  const max = parseNum(r.max);\n  const factor = parseNum(r.factor);\n  const item = {\n    min,\n    max,\n    estado: r.estado || undefined,\n    clasificacion: r.estado || undefined,\n    riesgo: r.riesgo || undefined,\n    factor\n  };\n\n  if (r.tipo_regla === 'ocupacion') {\n    tablas_pricing.reglas_ocupacion.push(item);\n    if (factor !== undefined) tablas_pricing.factor_ocupacion.push({ min, max, factor });\n  } else if (r.tipo_regla === 'pace') {\n    tablas_pricing.reglas_pace.push(item);\n    if (factor !== undefined) tablas_pricing.factor_pace.push({ min, max, factor });\n  } else if (r.tipo_regla === 'revpar') {\n    tablas_pricing.reglas_revpar.push(item);\n  } else if (r.tipo_regla === 'pickup') {\n    tablas_pricing.reglas_pickup.push(item);\n  } else if (r.tipo_regla === 'riesgo_ocupacion') {\n    tablas_pricing.reglas_riesgo.push(item);\n  }\n});\n\nfilasFactores.forEach(f => {\n  const val = parseNum(f.factor, 1.0);\n  const dim = f.dimension;\n  const clave = f.clave;\n  if (dim === 'canal') tablas_pricing.factores_canal[clave] = val;\n  else if (dim === 'tipo') tablas_pricing.factores_tipo[clave] = val;\n  else if (dim === 'pais') tablas_pricing.factores_pais[clave] = val;\n});\n\nlet startData = {};\ntry { startData = $('Start').first()?.json || {}; } catch (e) {}\n\nconst diasVista = parseInt(cfg.dias_vista_default) || 14;\n\nconst hotelConfig = {\n  hotel_id: startData.hotel_id || cfg.hotel_id,\n  nombre: cfg.nombre,\n  capacidad_total: parseNum(cfg.capacidad_total),\n  dias_vista_default: diasVista,\n  prefijo_archivo: cfg.prefijo_archivo,\n  rating_referencia: parseNum(cfg.rating_referencia, 4.5),\n  modelo_endpoint: cfg.modelo_endpoint,\n  ubicacion: {\n    lat: parseNum(cfg.lat),\n    lon: parseNum(cfg.lon),\n    ciudad: cfg.ciudad,\n    comunidad_autonoma: cfg.comunidad_autonoma,\n    codigo_pais: cfg.codigo_pais\n  },\n  reglas_pricing: {\n    suelo_ajuste: parseNum(cfg.suelo_ajuste, 0.75),\n    techo_ajuste: parseNum(cfg.techo_ajuste, 1.35),\n    bonus_festivo: parseNum(cfg.bonus_festivo, 1.10),\n    bonus_vacaciones: parseNum(cfg.bonus_vacaciones, 1.05)\n  },\n  tablas_pricing,\n  modelo_schema: filasSchema\n};\n\nreturn [{\n  json: {\n    hotelConfig,\n    periodo: String(hotelConfig.dias_vista_default),\n    fecha_inicio: fechaHoy\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6144,
+        1152
+      ],
+      "name": "Construir Contexto Hotel",
+      "id": "37717246-925f-40aa-b797-bc0d84350d2f"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "BatchGet Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BatchGet Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Construir Contexto Hotel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "9e6bec35-8629-495a-922e-7bfc6f7cc731",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
+  },
+  "nodeGroups": [],
+  "id": "rL1Tu6gnpL63Pc8B",
+  "tags": []
+}
