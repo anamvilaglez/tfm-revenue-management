@@ -1,0 +1,1721 @@
+{
+  "updatedAt": "2026-10-26T13:52:54.654Z",
+  "createdAt": "2026-10-07T08:27:40.873Z",
+  "id": "DmDkwn1BYxqupOyd",
+  "name": "Revenue Management TFM",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "96c65e56-e954-4833-8b7a-7c57ee0dce3c",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -7008,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "anamvilaglez@gmail.com",
+        "subject": "={{ $json.asunto }}",
+        "message": "={{ $json.cuerpoHtml }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -6560,
+        336
+      ],
+      "id": "940485b0-6cf9-40cb-9374-587fa8438958",
+      "name": "Enviar Alerta Error",
+      "webhookId": "17498567-3aa4-481f-a702-b4747a06da4c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "2rfDXPbS1CUaGU3U",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Obtener la salida de Manager Agent de forma robusta\nconst primerItem = $input.all()?.[0]?.json || $input.item?.json || {};\nlet narrativaLLM = primerItem.output || primerItem.text || primerItem.content || '';\n\nif (typeof narrativaLLM === 'object') {\n  narrativaLLM = JSON.stringify(narrativaLLM);\n}\n\nnarrativaLLM = String(narrativaLLM)\n  .replace(/```json[\\s\\S]*?```/g, '')\n  .replace(/```[\\s\\S]*?```/g, '');\n\n// 2. Localizar datos del Subflujo de Metricas o del nodo Normalizar\nlet datosMetricas = {};\ntry { datosMetricas = $(\"Call 'Subflow - Calculo Metricas'\").first().json || {}; } catch (e) {}\nif (!datosMetricas.calculo_metricas && !datosMetricas.motor_analitico) {\n  try { datosMetricas = $('Normalizar Periodo Actual').first().json || {}; } catch (e) {}\n}\n\nconst motorAnalitico = datosMetricas.calculo_metricas \n  || datosMetricas.motor_analitico \n  || {};\n\nconst serieDiaria = motorAnalitico.diario || [];\nconst totalPeriodo = motorAnalitico.total || {};\nconst contextoExterno = totalPeriodo.contexto_externo || {};\n\n// 3. Localizar hotelConfig\nlet hotelConfig = datosMetricas.hotelConfig || {};\nif (!hotelConfig.nombre) {\n  try { hotelConfig = $('Schedule Trigger Data').first().json?.hotelConfig || {}; } catch (e) {}\n}\nif (!hotelConfig.nombre) {\n  try { hotelConfig = $('Nodo Agregador').first().json?.hotelConfig || {}; } catch (e) {}\n}\n\n// 4. Competencia\nconst competencia = totalPeriodo.competencia \n  || datosMetricas.competenciaResumen \n  || $('Nodo Agregador').first()?.json?.competenciaResumen \n  || {};\n\nconst tablaCompetencia = (competencia.hoteles || []).map(h => ({\n  nombre: h.nombre,\n  rating: h.rating,\n  resenas: h.numResenas,\n  precio: h.precio\n}));\n\n// 5. Estadisticas de ocupacion\nconst umbralCriticoCfg = hotelConfig.tablas_pricing?.reglas_ocupacion?.[0]?.max;\nconst umbralCritico = (umbralCriticoCfg ? umbralCriticoCfg / 100 : 0.40);\n\nlet mediaOcupacion = 0;\nlet maxOcupacion = -1;\nlet minOcupacion = 999;\nlet fechaMax = '';\nlet fechaMin = '';\nlet sumaOcupaciones = 0;\nlet ocupacionesArray = [];\nlet diasBajoUmbral = 0;\n\nif (serieDiaria.length > 0) {\n  serieDiaria.forEach(d => {\n    const oc = d.ocupacion?.prevista !== undefined \n      ? (d.ocupacion.prevista > 1 ? d.ocupacion.prevista / 100 : d.ocupacion.prevista) \n      : 0;\n    sumaOcupaciones += oc;\n    ocupacionesArray.push(oc);\n\n    if (oc > maxOcupacion) { maxOcupacion = oc; fechaMax = d.fecha; }\n    if (oc < minOcupacion) { minOcupacion = oc; fechaMin = d.fecha; }\n    if (oc < umbralCritico) { diasBajoUmbral++; }\n  });\n  mediaOcupacion = sumaOcupaciones / serieDiaria.length;\n}\n\nconst varianza = ocupacionesArray.length > 0 \n  ? ocupacionesArray.reduce((acc, val) => acc + Math.pow(val - mediaOcupacion, 2), 0) / ocupacionesArray.length \n  : 0;\nconst desviacionEstandar = Math.sqrt(varianza);\n\nconst mitad = Math.floor(serieDiaria.length / 2);\nconst sem1 = serieDiaria.slice(0, mitad);\nconst sem2 = serieDiaria.slice(mitad);\n\nconst mediaSem1 = sem1.length > 0 ? sem1.reduce((acc, d) => acc + (d.ocupacion?.prevista > 1 ? d.ocupacion.prevista / 100 : d.ocupacion.prevista), 0) / sem1.length : mediaOcupacion;\nconst mediaSem2 = sem2.length > 0 ? sem2.reduce((acc, d) => acc + (d.ocupacion?.prevista > 1 ? d.ocupacion.prevista / 100 : d.ocupacion.prevista), 0) / sem2.length : mediaOcupacion;\nconst variacionSemanal = mediaSem2 - mediaSem1;\nconst tendencia = variacionSemanal > 0.01 ? 'ascendente' : variacionSemanal < -0.01 ? 'descendente' : 'estable';\n\nconst estadisticasCalculadas = {\n  media: mediaOcupacion,\n  maximo: maxOcupacion,\n  minimo: minOcupacion,\n  fechaMax: fechaMax,\n  fechaMin: fechaMin,\n  tendencia: tendencia,\n  desviacion: desviacionEstandar,\n  umbralCritico: umbralCritico,\n  diasBajoUmbral: diasBajoUmbral,\n  mediaSemana1: mediaSem1,\n  mediaSemana2: mediaSem2,\n  variacionSemanal: variacionSemanal\n};\n\n// 6. QuickChart\nlet chartUrlGenerada = '';\nif (serieDiaria.length > 0) {\n  const labelsChart = serieDiaria.map(d => (d.fecha || '').slice(5));\n  const dataChartPrevista = serieDiaria.map(d => Number((d.ocupacion?.prevista > 1 ? d.ocupacion.prevista : (d.ocupacion?.prevista ?? 0) * 100).toFixed(1)));\n  const dataChartActual = serieDiaria.map(d => Number((d.ocupacion?.actual > 1 ? d.ocupacion.actual : (d.ocupacion?.actual ?? 0) * 100).toFixed(1)));\n  const dataChartAnioAnterior = serieDiaria.map(d => {\n    const v = d.ocupacion?.anio_anterior;\n    return (v === null || v === undefined) ? null : Number((v > 1 ? v : v * 100).toFixed(1));\n  });\n\n  const chartConfig = {\n    type: 'line',\n    data: {\n      labels: labelsChart,\n      datasets: [\n        { label: 'Ocupacion Prevista (%)', data: dataChartPrevista, borderColor: '#1e3a8a', backgroundColor: 'rgba(30, 58, 138, 0.1)', fill: true, tension: 0.3 },\n        { label: 'Ocupacion Real (%)', data: dataChartActual, borderColor: '#16a34a', backgroundColor: 'rgba(22, 163, 74, 0.05)', fill: false, tension: 0.3 },\n        { label: 'Ano anterior (%)', data: dataChartAnioAnterior, borderColor: '#9ca3af', borderDash: [6, 4], fill: false, tension: 0.3, spanGaps: true }\n      ]\n    },\n    options: {\n      plugins: { title: { display: true, text: 'Evolucion Demanda: ' + (hotelConfig.nombre || 'Hotel') } },\n      scales: { y: { beginAtZero: true, max: 100 } }\n    }\n  };\n  chartUrlGenerada = 'https://quickchart.io/chart?w=650&h=260&c=' + encodeURIComponent(JSON.stringify(chartConfig));\n}\n\n// 7. Tabla diaria normalizada\nconst tablaDiaria = serieDiaria.map(d => {\n  const prec = parseFloat(d.contexto_externo?.clima?.precipitacion ?? d.clima?.precipitacion ?? 0);\n  return {\n    fecha: d.fecha,\n    ocupacion_pct: d.ocupacion?.prevista ?? 0,\n    ocupacion_actual: d.ocupacion?.actual ?? null,\n    adr_eur: d.ingresos?.adr ?? 0,\n    adr_sugerido_eur: d.pricing_dinamico?.adr_sugerido ?? null,\n    ajuste_pricing_pct: d.pricing_dinamico?.ajuste_pct ?? null,\n    revpar_eur: d.ingresos?.revpar ?? 0,\n    pickup_7: d.pickup_pace?.pickup_7 ?? null,\n    festivo: d.contexto_externo?.es_festivo ? 'Si' : 'No',\n    vacaciones: d.contexto_externo?.es_vacaciones_escolares ? 'Si' : 'No',\n    lluvia: prec >= 1 ? 'Si' : 'No',\n    precipitacion_mm: !isNaN(prec) ? prec : 0,\n    temp_max: d.contexto_externo?.clima?.temp_max ?? d.clima?.temp_max ?? null,\n    temp_min: d.contexto_externo?.clima?.temp_min ?? d.clima?.temp_min ?? null\n  };\n});\n\n// 8. Historico\nlet datosHistorico = {};\ntry { datosHistorico = $('Calcular Similitud').first().json || {}; } catch (e) {}\nconst tablaHistorico = (datosHistorico.top3_periodos || []).map(p => ({\n  periodo: p.fecha_inicio + ' a ' + p.fecha_fin,\n  ocupacion_media: p.ocupacion_media,\n  adr: p.adr,\n  revpar: p.revpar,\n  pickup_7: p.pickup_7,\n  pct_festivos: Math.round((p.pct_dias_festivos ?? 0) * 100),\n  pct_vacaciones: Math.round((p.pct_dias_vacaciones ?? 0) * 100),\n  similitud: p.distancia != null ? Number((1 - p.distancia).toFixed(2)) : null\n}));\n\nconst ingresosResumen = {\n  totales_previstos: totalPeriodo.ingresos?.ingresos_totales_previstos ?? null,\n  totales_actuales: totalPeriodo.ingresos?.ingresos_totales_actuales ?? null,\n  totales_anio_anterior: totalPeriodo.ingresos?.ingresos_totales_anio_anterior ?? null,\n  yoy_pct: totalPeriodo.comparativas?.ingresos_yoy_pct ?? null,\n  dias_sin_dato_yoy: contextoExterno.dias_sin_dato_historico_yoy ?? null,\n  dias_totales: serieDiaria.length\n};\n\nconst fechaInicio = serieDiaria[0]?.fecha;\nconst fechaFin = serieDiaria[serieDiaria.length - 1]?.fecha;\nconst periodoTexto = (fechaInicio && fechaFin) ? 'Del ' + fechaInicio + ' al ' + fechaFin : 'Proximos dias';\n\n// 9. Resumen cabecero\nconst ocPrevistaMedia = totalPeriodo.ocupacion?.prevista_media ?? (mediaOcupacion ? (mediaOcupacion * 100).toFixed(1) : 'N/A');\nconst ocActualMedia = totalPeriodo.ocupacion?.actual_media ?? 'N/A';\nconst adrMedio = totalPeriodo.ingresos?.adr_medio ?? 'N/A';\nconst revparMedio = totalPeriodo.ingresos?.revpar_medio ?? 'N/A';\nconst ingresosTotales = totalPeriodo.ingresos?.ingresos_totales_previstos \n  ? Math.round(totalPeriodo.ingresos.ingresos_totales_previstos).toLocaleString('es-ES') + ' EUR' \n  : 'N/A';\nconst paceEstado = totalPeriodo.pickup_pace?.estado_pace ?? 'N/A';\nconst compRating = competencia.ratingMedioZona ?? 'N/A';\nconst compNum = competencia.numCompetidores ?? (competencia.hoteles?.length || 0);\n\nconst cabeceroTexto = 'Resumen Ejecutivo (' + periodoTexto + ') - ' + (hotelConfig.nombre || 'Hotel') + '\\n'\n  + '* Ocupacion Prevista: ' + ocPrevistaMedia + '% (Actual: ' + ocActualMedia + '%) | Tendencia: ' + tendencia.toUpperCase() + '\\n'\n  + '* Tarifa Media (ADR): ' + adrMedio + ' EUR | RevPAR: ' + revparMedio + ' EUR | Ingresos Estimados: ' + ingresosTotales + '\\n'\n  + '* Ritmo (Pace): ' + paceEstado + ' | Compset: ' + compRating + ' estrellas (' + compNum + ' hoteles)';\n\nconst cabeceroHtml = '<table style=\"width:100%; border-collapse:collapse; background-color:#1e3a8a; color:#ffffff; font-family:Arial,sans-serif; border-radius:8px; overflow:hidden; margin-bottom:20px;\">'\n  + '<tr><td style=\"padding:18px 22px;\">'\n  + '<h2 style=\"margin:0 0 4px 0; font-size:20px; color:#ffffff;\">' + (hotelConfig.nombre || 'Hotel') + ' &mdash; Resumen Ejecutivo</h2>'\n  + '<p style=\"margin:0 0 16px 0; font-size:13px; color:#93c5fd;\">' + periodoTexto + ' &middot; Horizonte: ' + serieDiaria.length + ' dias</p>'\n  + '<table style=\"width:100%; border-top:1px solid #3b82f6; padding-top:12px; font-size:13px; color:#ffffff; border-collapse:collapse;\">'\n  + '<tr>'\n  + '<td style=\"padding:6px 4px; width:25%;\"><strong>Ocup. Prevista:</strong> ' + ocPrevistaMedia + '%</td>'\n  + '<td style=\"padding:6px 4px; width:25%;\"><strong>ADR Medio:</strong> ' + adrMedio + ' EUR</td>'\n  + '<td style=\"padding:6px 4px; width:25%;\"><strong>RevPAR:</strong> ' + revparMedio + ' EUR</td>'\n  + '<td style=\"padding:6px 4px; width:25%;\"><strong>Ingresos Est.:</strong> ' + ingresosTotales + '</td>'\n  + '</tr><tr>'\n  + '<td style=\"padding:6px 4px;\"><strong>Tendencia:</strong> ' + tendencia.toUpperCase() + '</td>'\n  + '<td style=\"padding:6px 4px;\"><strong>Ritmo (Pace):</strong> ' + paceEstado + '</td>'\n  + '<td style=\"padding:6px 4px;\"><strong>Dias Criticos:</strong> ' + diasBajoUmbral + '</td>'\n  + '<td style=\"padding:6px 4px;\"><strong>Compset:</strong> ' + compRating + ' &#11088; (' + compNum + ' hoteles)</td>'\n  + '</tr></table></td></tr></table>';\n\nreturn [{\n  json: {\n    hotelConfig: hotelConfig,\n    periodo: periodoTexto,\n    cabecero_email_texto: cabeceroTexto,\n    cabecero_email_html: cabeceroHtml,\n    estadisticas: JSON.stringify(estadisticasCalculadas),\n    chart_url: chartUrlGenerada,\n    escenario_alternativo: '',\n    narrativa_html: narrativaLLM,\n    tabla_diaria: JSON.stringify(tablaDiaria),\n    tabla_historico: JSON.stringify(tablaHistorico),\n    tabla_competencia: JSON.stringify(tablaCompetencia),\n    contexto_externo: JSON.stringify(contextoExterno),\n    tabla_perfil_demanda: JSON.stringify(totalPeriodo.perfil_demanda || {}),\n    ingresos_resumen: JSON.stringify(ingresosResumen)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        -384
+      ],
+      "id": "7df49c7f-5cd6-4d1f-ab3c-887d9c8d1bbe",
+      "name": "Extraer Resultado del Agente"
+    },
+    {
+      "parameters": {
+        "sendTo": "anamvilaglez@gmail.com",
+        "subject": "=Informe de Revenue Management - {{ $json.fileName }} || Resumen",
+        "message": "=Se adjunta el informe completo de Revenue Management.\\n\\n{{ $json.cabecero_email_texto }}",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {}
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -1568,
+        -480
+      ],
+      "id": "0c40ef1f-5524-4d34-9a00-0d764e8dfef2",
+      "name": "Enviar Gmail",
+      "webhookId": "845de67d-5672-4b0d-9a91-b013a2014098",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "2rfDXPbS1CUaGU3U",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ $json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/17Pn4-1Q23F6uJuc-GSRkvz-2eRKbyF0l",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "id": "98ecc36b-03a3-4e8d-b962-0367d2e1cb27",
+      "name": "Subir a Unidad Compartida",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1568,
+        -288
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bG4o0wjUYU9UwZ0H",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "pQrhTGZeqy1tacvc",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/pQrhTGZeqy1tacvc",
+          "cachedResultName": "Subflow - Generar Informe"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "periodo": "={{ $json.periodo }}",
+            "estadisticas": "={{ $json.estadisticas }}",
+            "chart_url": "={{ $json.chart_url }}",
+            "escenario_alternativo": "={{ $json.escenario_alternativo }}",
+            "narrativa_html": "={{ $json.narrativa_html }}",
+            "tabla_diaria": "={{ $json.tabla_diaria }}",
+            "tabla_historico": "={{ $json.tabla_historico }}",
+            "tabla_competencia": "={{ $json.tabla_competencia }}",
+            "contexto_externo": "={{ $json.contexto_externo }}",
+            "tabla_perfil_demanda": "={{ $json.tabla_perfil_demanda }}",
+            "ingresos_resumen": "={{ $json.ingresos_resumen }}",
+            "hotelConfig": "={{ $json.hotelConfig }}"
+          },
+          "matchingColumns": [
+            "parameters"
+          ],
+          "schema": [
+            {
+              "id": "periodo",
+              "displayName": "periodo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "estadisticas",
+              "displayName": "estadisticas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "chart_url",
+              "displayName": "chart_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "escenario_alternativo",
+              "displayName": "escenario_alternativo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "narrativa_html",
+              "displayName": "narrativa_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "tabla_diaria",
+              "displayName": "tabla_diaria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "tabla_historico",
+              "displayName": "tabla_historico",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "tabla_competencia",
+              "displayName": "tabla_competencia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "contexto_externo",
+              "displayName": "contexto_externo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "tabla_perfil_demanda",
+              "displayName": "tabla_perfil_demanda",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ingresos_resumen",
+              "displayName": "ingresos_resumen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "hotelConfig",
+              "displayName": "hotelConfig",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -1792,
+        -384
+      ],
+      "id": "8ea56d4b-be35-43a2-a035-a285f6fb1af8",
+      "name": "Call Subflow - Generar Informe"
+    },
+    {
+      "parameters": {
+        "jsCode": "const actual = $('Normalizar Periodo Actual').first().json.periodo_actual;\nconst historico = items.map(i => i.json).filter(h => h.fecha_inicio);\n\nconst features = ['ocupacion_media', 'adr', 'pickup_7', 'pct_dias_festivos', 'pct_dias_vacaciones', 'pct_dias_lluvia'];\nconst pesos = {\n  ocupacion_media: 0.35,\n  adr: 0.15,\n  pickup_7: 0.20,\n  pct_dias_festivos: 0.15,\n  pct_dias_vacaciones: 0.10,\n  pct_dias_lluvia: 0.05\n};\n\n// Rangos min-max calculados incluyendo el periodo actual, para no distorsionar\n// la normalización si el periodo actual es un extremo (ej. ocupación récord)\nconst todos = [...historico, actual];\nconst rangos = {};\nfeatures.forEach(f => {\n  const valores = todos.map(r => r[f]).filter(v => v !== null && v !== undefined && !isNaN(v));\n  rangos[f] = { min: Math.min(...valores), max: Math.max(...valores) };\n});\n\nfunction normalizar(valor, rango) {\n  if (valor === null || valor === undefined || isNaN(valor)) return 0.5; // neutro si falta el dato\n  if (rango.max === rango.min) return 0.5;\n  return (valor - rango.min) / (rango.max - rango.min);\n}\n\nfunction distancia(a, h) {\n  let suma = 0;\n  features.forEach(f => {\n    const na = normalizar(a[f], rangos[f]);\n    const nh = normalizar(h[f], rangos[f]);\n    suma += pesos[f] * Math.pow(na - nh, 2);\n  });\n  return Math.sqrt(suma);\n}\n\nconst top3 = historico\n  .map(h => ({ ...h, distancia: distancia(actual, h) }))\n  .sort((a, b) => a.distancia - b.distancia)\n  .slice(0, 3);\n\nconst contexto_historico = top3.length\n  ? top3.map(p =>\n      `Periodo ${p.fecha_inicio} a ${p.fecha_fin}: ocupación media ${p.ocupacion_media}%, ADR ${p.adr}€, RevPAR ${p.revpar}€, pickup_7 ${p.pickup_7}, festivos en ${Math.round(p.pct_dias_festivos * 100)}% de los días, vacaciones escolares en ${Math.round(p.pct_dias_vacaciones * 100)}% de los días, lluvia en ${p.pct_dias_lluvia != null ? Math.round(p.pct_dias_lluvia * 100) + '%' : 'sin datos'} (distancia de similitud: ${p.distancia.toFixed(3)}, menor = más parecido).`\n    ).join('\\n')\n  : 'Sin periodos históricos disponibles para comparar.';\n\nreturn [{\n  json: {\n    ...$('Normalizar Periodo Actual').first().json,\n    contexto_historico,     // el texto para el LLM\n    top3_periodos: top3     // el array crudo para la tabla del informe\n  }\n}];;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4320,
+        -48
+      ],
+      "id": "8655e6fb-24b0-4bbc-b2c9-0bfb899f2c3e",
+      "name": "Calcular Similitud"
+    },
+    {
+      "parameters": {
+        "jsCode": "const total = $json.calculo_metricas.total;\nconst diario = $json.calculo_metricas.diario;\n\nconst dias_analizados = total.dias_analizados;\nconst ocupacion_media = total.ocupacion.prevista_media;\nconst adr = total.ingresos.adr_medio;\nconst revpar = total.ingresos.revpar_medio;\nconst pickup_7 = total.pickup_pace.pickup_7_medio;\nconst dias_festivos = total.contexto_externo.dias_festivos;\nconst dias_vacaciones_escolares = total.contexto_externo.dias_vacaciones_escolares;\n\nconst pct_dias_vacaciones = dias_analizados ? dias_vacaciones_escolares / dias_analizados : 0;\nconst pct_dias_festivos = dias_analizados ? dias_festivos / dias_analizados : 0;\n\n// Clima: lo sacamos del contexto_externo.clima de cada día (ya lo trae 'Calcular Metricas')\nconst climas = diario.map(d => d.contexto_externo?.clima).filter(Boolean);\nconst diasConLluvia = climas.filter(c => c.precipitacion != null && c.precipitacion >= 1).length;\nconst diasBuenTiempo = climas.filter(c => c.precipitacion != null && c.precipitacion < 1 && c.temp_max > 20).length;\nconst media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;\nconst tempMaxMedia = media(climas.map(c => c.temp_max).filter(v => v != null));\nconst precipTotal = climas.reduce((s, c) => s + (c.precipitacion ?? 0), 0);\n\nconst periodo_actual = {\n  ocupacion_media: Number(ocupacion_media.toFixed(2)),\n  adr: Number(adr.toFixed(2)),\n  revpar: Number(revpar.toFixed(2)),\n  pickup_7: pickup_7,\n  dias_con_datos: dias_analizados,\n  dias_vacaciones_escolares,\n  dias_festivos,\n  pct_dias_vacaciones: Number(pct_dias_vacaciones.toFixed(2)),\n  pct_dias_festivos: Number(pct_dias_festivos.toFixed(2)),\n  pct_dias_lluvia: climas.length ? Number((diasConLluvia / climas.length).toFixed(2)) : null,\n  pct_dias_buen_tiempo: climas.length ? Number((diasBuenTiempo / climas.length).toFixed(2)) : null,\n  temp_max_media: tempMaxMedia != null ? Number(tempMaxMedia.toFixed(1)) : null,\n  precipitacion_total_mm: Number(precipTotal.toFixed(1))\n};\n\nreturn [{ json: { ...$json, periodo_actual } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4768,
+        -48
+      ],
+      "id": "00c529c1-9b8c-4f45-8290-b6af263f7604",
+      "name": "Normalizar Periodo Actual"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/historico_periodos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Range",
+              "value": "0-1999"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4544,
+        -48
+      ],
+      "id": "99067fae-de86-41d8-b680-78e26bdb584b",
+      "name": "Traer Historico Semanal",
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const texto = $input.item.json.output || $input.item.json.text || '';\nconst hoy = new Date().toISOString().split('T')[0];\nconst tareas = [];\n\nfunction limpiarTexto(t) {\n  return t.replace(/\\*\\*/g, '').replace(/^[-\\*\\d\\.\\s\\[\\]x]+/, '').trim();\n}\n\n// -----------------------------------------------------------------\n// 1. EXTRAER CHECKLIST DE EJECUCIÓN (Tareas directas para el turno)\n// -----------------------------------------------------------------\nconst matchChecklist = texto.match(/Check-list de Ejecución[\\s\\S]*?(?=(?:##|\\n\\n\\n|$))/i);\nif (matchChecklist) {\n  const lineas = matchChecklist[0].split('\\n');\n  lineas.forEach(linea => {\n    const l = linea.trim();\n    // Captura líneas numeradas: \"1. [PMS / CM]: ...\" o viñetas\n    if (/^(?:\\d+[\\.\\)]|[-*])\\s+/.test(l)) {\n      const limpia = limpiarTexto(l);\n      if (limpia.length > 8 && !limpia.toLowerCase().includes('lista numerada')) {\n        tareas.push({\n          json: {\n            titulo: `✅ [Turno] ${limpia}`,\n            vencimiento: `${hoy}T20:00:00.000Z`,\n            notas: `Checklist diario de Revenue Management generado el ${hoy}.`\n          }\n        });\n      }\n    }\n  });\n}\n\n// -----------------------------------------------------------------\n// 2. EXTRAER ÓRDENES DE CARGA POR PERIODO Y CANAL (Tarifas y MinLOS)\n// -----------------------------------------------------------------\nconst bloquesPeriodo = texto.split(/###\\s+Periodo:/i);\n\n// Omitimos el primer fragmento (cabecera antes del primer periodo)\nfor (let i = 1; i < bloquesPeriodo.length; i++) {\n  const bloque = bloquesPeriodo[i];\n  const nombrePeriodo = (bloque.split('\\n')[0] || '').replace(/\\*\\*/g, '').trim();\n\n  // Buscar órdenes específicas por canal\n  const canales = [\n    { key: 'Web Propia / Motor', etiqueta: 'Web' },\n    { key: 'OTAs', etiqueta: 'OTAs' },\n    { key: 'Canal Directo', etiqueta: 'Directo' }\n  ];\n\n  canales.forEach(canal => {\n    const regexCanal = new RegExp(`${canal.key}[\\\\s\\\\S]*?(?=(?:- \\\\*\\\\*|###|##|$))`, 'i');\n    const matchCanal = bloque.match(regexCanal);\n\n    if (matchCanal) {\n      const contenidoCanal = matchCanal[0];\n      const tarifaMatch = contenidoCanal.match(/Tarifa [^:]*:\\s*([^\\n]+)/i);\n      const restriccionMatch = contenidoCanal.match(/Restricci[oó]n:\\s*([^\\n]+)/i);\n\n      const tarifa = tarifaMatch ? limpiarTexto(tarifaMatch[1]) : '';\n      const restriccion = restriccionMatch ? limpiarTexto(restriccionMatch[1]) : '';\n\n      if (tarifa || restriccion) {\n        let detalle = [];\n        if (tarifa) detalle.push(`Tarifa: ${tarifa}`);\n        if (restriccion) detalle.push(`Restricción: ${restriccion}`);\n\n        tareas.push({\n          json: {\n            titulo: `🏨 [${canal.etiqueta} | ${nombrePeriodo}] ${detalle.join(' · ')}`,\n            vencimiento: `${hoy}T18:00:00.000Z`,\n            notas: `Instrucción de carga para ${canal.key} en el periodo ${nombrePeriodo}.\\n${contenidoCanal.trim()}`\n          }\n        });\n      }\n    }\n  });\n}\n\n// -----------------------------------------------------------------\n// 3. EXTRAER REGLAS DE YIELDING / TRIGGERS ACTIVOS\n// -----------------------------------------------------------------\nconst matchYielding = texto.match(/Reglas Automatizadas de Yielding[\\s\\S]*?(?=(?:##|$))/i);\nif (matchYielding) {\n  const lineasYield = matchYielding[0].split('\\n');\n  let triggerActual = '';\n\n  lineasYield.forEach(l => {\n    const trimmed = l.trim();\n    if (trimmed.toLowerCase().includes('trigger')) {\n      triggerActual = limpiarTexto(trimmed);\n    } else if (trimmed.toLowerCase().includes('acción inmediata:')) {\n      const accion = limpiarTexto(trimmed.split(/acción inmediata:/i)[1]);\n      if (accion) {\n        tareas.push({\n          json: {\n            titulo: `⚡ [Alerta Yield] ${triggerActual ? triggerActual + ': ' : ''}${accion}`,\n            vencimiento: `${hoy}T21:00:00.000Z`,\n            notas: `Regla de yielding a supervisar en el PMS durante el turno de hoy (${hoy}).`\n          }\n        });\n      }\n    }\n  });\n}\n\n// Si por alguna razón no extrajo nada, devuelve aviso\nreturn tareas.length ? tareas : [{ json: { titulo: \"Revisar informe de Revenue diario\", vencimiento: `${hoy}T20:00:00.000Z`, notas: \"No se pudieron desglosar las tareas automáticamente.\" } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        -576
+      ],
+      "id": "9f22337c-c5bc-449b-ac12-6fe1e2f0aa16",
+      "name": "Code - Creacion Tareas Google Tasks"
+    },
+    {
+      "parameters": {
+        "task": "=@default",
+        "title": "={{ $json.titulo }}",
+        "additionalFields": {
+          "dueDate": "={{ $json.vencimiento }}",
+          "notes": "={{ $json.notas }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        -1792,
+        -576
+      ],
+      "id": "698c3ebe-0586-465e-9b25-8a4c52f98fff",
+      "name": "Crear una Tarea",
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "3FpXmGBmNZ5G0QHR",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -7008,
+        -144
+      ],
+      "id": "3e34fd94-20f5-44da-b10e-87580aa6e852",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rL1Tu6gnpL63Pc8B",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/rL1Tu6gnpL63Pc8B",
+          "cachedResultName": "Subflow - Cargar Configuracion Hotel (1 Request)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "hotel_id",
+              "displayName": "hotel_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "periodo",
+              "displayName": "periodo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "fecha_inicio",
+              "displayName": "fecha_inicio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "spreadsheet_id",
+              "displayName": "spreadsheet_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -6560,
+        -48
+      ],
+      "id": "afba80b9-e081-4453-977f-b769a04d3212",
+      "name": "Call Subflow - Cargar Configuracion Hotel"
+    },
+    {
+      "parameters": {
+        "jsCode": "const hoy = new Date();\nconst Month = String(hoy.getUTCMonth() + 1).padStart(2, '0');\nconst Year = String(hoy.getUTCFullYear());\nconst fechaInicio = hoy.toISOString().split('T')[0];\n\nfunction assertField(val, errorMsg) {\n  if (val === undefined || val === null || val === '' || (typeof val === 'number' && isNaN(val))) {\n    throw new Error('[VALIDACION CONFIG]: ' + errorMsg);\n  }\n  return val;\n}\n\nconst hotelConfig = $input.item.json.hotelConfig || $('Construir Contexto Hotel').first()?.json?.hotelConfig;\n\nif (!hotelConfig) {\n  throw new Error(\"[VALIDACION CONFIG]: No se recibio 'hotelConfig' desde Google Sheets.\");\n}\n\nassertField(hotelConfig.hotel_id, \"Falta 'hotel_id' en hotel_config.\");\nassertField(hotelConfig.nombre, \"Falta 'nombre' en hotel_config.\");\nassertField(hotelConfig.capacidad_total, \"Falta 'capacidad_total' en hotel_config.\");\nassertField(hotelConfig.dias_vista_default, \"Falta 'dias_vista_default' en hotel_config.\");\nassertField(hotelConfig.modelo_endpoint, \"Falta 'modelo_endpoint' en hotel_config.\");\n\nconst ubicacion = hotelConfig.ubicacion || {};\nassertField(ubicacion.lat, \"Falta 'lat' en hotel_config.\");\nassertField(ubicacion.lon, \"Falta 'lon' en hotel_config.\");\nassertField(ubicacion.ciudad, \"Falta 'ciudad' en hotel_config.\");\nassertField(ubicacion.codigo_pais, \"Falta 'codigo_pais' en hotel_config.\");\n\nif (!Array.isArray(hotelConfig.modelo_schema) || hotelConfig.modelo_schema.length === 0) {\n  throw new Error(\"[VALIDACION CONFIG]: 'modelo_schema' no contiene variables definidas.\");\n}\n\nreturn [{\n  json: {\n    chatInput: '',\n    sessionId: 'schedule-session',\n    Month: Month,\n    Year: Year,\n    periodo: String(hotelConfig.dias_vista_default),\n    fecha_inicio: fechaInicio,\n    __es_chat: false,\n    hotelConfig: hotelConfig\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6336,
+        -48
+      ],
+      "id": "a42a17ad-bb4a-4484-a4ab-6c4ba412163b",
+      "name": "Schedule Trigger Data"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "pdWAPjZaXKtqE10K",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/pdWAPjZaXKtqE10K",
+          "cachedResultName": "Subflujo Datos Externos con Cache Supabase"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Month": "={{ $json.Month }}",
+            "Year": "={{ $json.Year }}",
+            "hotelConfig": "={{ $json.hotelConfig }}",
+            "periodo": "={{ String($json.periodo) }}",
+            "fecha_inicio": "={{ $json.fecha_inicio }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "fecha_inicio",
+              "displayName": "fecha_inicio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "periodo",
+              "displayName": "periodo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "Month",
+              "displayName": "Month",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "Year",
+              "displayName": "Year",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "hotelConfig",
+              "displayName": "hotelConfig",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -6112,
+        -48
+      ],
+      "name": "Call Subflow - Lectura Datos Externos",
+      "id": "c3866f99-dddc-48ef-a9f0-cbb5c5f49d77"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "IeCl7HkRGgDQdDoi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/IeCl7HkRGgDQdDoi",
+          "cachedResultName": "Subflow - Lectura Input Reservas"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contextoExternoSerie": "={{ $json.contextoExternoSerie }}",
+            "hotelConfig": "={{ $json.hotelConfig }}"
+          },
+          "matchingColumns": [
+            "Month",
+            "Year",
+            ""
+          ],
+          "schema": [
+            {
+              "id": "contextoExternoSerie",
+              "displayName": "contextoExternoSerie",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "hotelConfig",
+              "displayName": "hotelConfig",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -5888,
+        -48
+      ],
+      "name": "Call Subflow Lectura Input Reservas",
+      "id": "bc043ff9-b545-438e-a455-5253e5615f0f"
+    },
+    {
+      "parameters": {
+        "jsCode": "let reservasData = {};\nlet datosExternosData = {};\n\ntry { reservasData = $('Call Subflow Lectura Input Reservas').first().json || {}; } catch (e) {}\ntry { datosExternosData = $('Call Subflow - Lectura Datos Externos').first().json || {}; } catch (e) {}\n\nconst serieReservas = reservasData.contextoNegocioSerie || [];\nconst serieExterna = datosExternosData.contextoExternoSerie || [];\nconst inputModelo = reservasData.inputModelo || [];\nconst hotelConfig = reservasData.hotelConfig || datosExternosData.hotelConfig || $('Schedule Trigger Data').first().json.hotelConfig || {};\n\nconst externaPorFecha = {};\nserieExterna.forEach(d => { externaPorFecha[d.fecha] = d; });\n\nconst contextoNegocioSerie = serieReservas.map(dia => {\n  const ext = externaPorFecha[dia.fecha] || {};\n  return {\n    ...dia,\n    es_vacaciones_escolares: ext.es_vacaciones_escolares ?? false,\n    es_festivo: ext.es_festivo ?? false,\n    clima: ext.clima || null,\n    ajuste_pct: ext.ajuste_pct ?? 0,\n    motivo_ajuste: ext.motivo_ajuste || 'sin ajuste'\n  };\n});\n\nreturn [{\n  json: {\n    ...reservasData,\n    ...datosExternosData,\n    hotelConfig,\n    contextoNegocioSerie,\n    inputModelo\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5664,
+        -48
+      ],
+      "id": "a7759644-cefc-449f-8806-057ae5167716",
+      "name": "Consolidar Inputs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SMYVrZQScmSUZIKw",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SMYVrZQScmSUZIKw",
+          "cachedResultName": "Subflow - Prediccion"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "modoPrueba": false,
+            "inputModelo": "={{ $json.inputModelo }}",
+            "periodo": "={{ $json.periodo }}",
+            "contextoNegocioSerie": "={{ $json.contextoNegocioSerie }}",
+            "competenciaResumen": "={{ $json.competenciaResumen }}",
+            "hotelConfig": "={{ $json.hotelConfig }}"
+          },
+          "matchingColumns": [
+            "values"
+          ],
+          "schema": [
+            {
+              "id": "periodo",
+              "displayName": "periodo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "inputModelo",
+              "displayName": "inputModelo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "modoPrueba",
+              "displayName": "modoPrueba",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean",
+              "removed": false
+            },
+            {
+              "id": "contextoNegocioSerie",
+              "displayName": "contextoNegocioSerie",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "competenciaResumen",
+              "displayName": "competenciaResumen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "hotelConfig",
+              "displayName": "hotelConfig",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -5440,
+        -48
+      ],
+      "id": "ff4c0667-4b53-46e0-9313-6e0405b5bf39",
+      "name": "Call 'Subflow - Prediccion'"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resultados = $json.resultados || [];\nconst contextoNegocioSerie = $json.contextoNegocioSerie || [];\nconst competenciaResumen = $json.competenciaResumen || null;\nconst hotelConfig = $json.hotelConfig || $('Consolidar Inputs').first().json.hotelConfig || {};\n\nconst contextoPorFecha = {};\ncontextoNegocioSerie.forEach(d => { contextoPorFecha[d.fecha] = d; });\n\nconst serieDiaria = resultados.map(r => {\n  const ctx = contextoPorFecha[r.Fecha] || {};\n  return {\n    fecha: r.Fecha,\n    ocupacion_actual: r.ocupacion_actual ?? 0,\n    ocupacion_prevista: r.ocupacion_prevista ?? 0,\n    adr: ctx.adr_actual_eur ?? ctx.adr_actual ?? 0,\n    ocupacion_anio_anterior: ctx.ocupacion_mismo_periodo_anio_anterior ?? null,\n    adr_anio_anterior: ctx.adr_mismo_periodo_anio_anterior ?? null,\n    sin_dato_historico_yoy: ctx.sin_dato_historico_yoy ?? true,\n    pickup_7: ctx.pickup_ultimos_7_dias ?? null,\n    pickup_14: ctx.pickup_ultimos_14_dias ?? null,\n    ritmo_pickup: ctx.ritmo_pickup ?? null,\n    estancia_media_noches: ctx.estancia_media_noches ?? null,\n    es_festivo: ctx.es_festivo ?? false,\n    es_vacaciones_escolares: ctx.es_vacaciones_escolares ?? false,\n    clima: ctx.clima ?? null,\n    canal_moda: ctx.canal_moda ?? null,\n    tipo_moda: ctx.tipo_moda ?? null,\n    pais: ctx.pais_moda ?? null,\n    canal_detalle: ctx.canal_detalle ?? null,\n    pais_detalle: ctx.pais_detalle ?? null,\n    tipo_detalle: ctx.tipo_detalle ?? null\n  };\n});\n\nreturn [{\n  json: {\n    ...$json,\n    hotelConfig,\n    serieDiaria,\n    competenciaResumen\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5216,
+        -48
+      ],
+      "id": "835a4abf-ac35-4812-b123-d72ac7cb52c0",
+      "name": "Nodo Agregador"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hQg0ASWJthKM1tPI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/hQg0ASWJthKM1tPI",
+          "cachedResultName": "Subflow - Calculo Metricas"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "competenciaResumen": "={{ $json.competenciaResumen }}",
+            "serieDiaria": "={{ $json.serieDiaria }}",
+            "hotelConfig": "={{ $json.hotelConfig }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "serieDiaria",
+              "displayName": "serieDiaria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "competenciaResumen",
+              "displayName": "competenciaResumen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "hotelConfig",
+              "displayName": "hotelConfig",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -4992,
+        -48
+      ],
+      "id": "883aae0f-85ba-42c1-ae6b-3211a9b97eec",
+      "name": "Call 'Subflow - Calculo Metricas'"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ejecucion = $input.item.json.execution || {};\nconst error = ejecucion.error || {};\nconst workflow = $input.item.json.workflow || {};\n\nconst wfNombre = workflow.name || 'Workflow Revenue Management';\nconst nodoFallido = error.node?.name || ejecucion.lastNodeExecuted || 'Desconocido';\nconst mensajeError = error.message || 'Error no especificado';\nconst stackTrace = error.stack || 'Sin traza disponible';\nconst executionId = ejecucion.id || 'N/A';\nconst fechaHora = new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });\n\nconst asunto = `🚨 ERROR: Fallo en ${wfNombre} (${nodoFallido})`;\n\nconst cuerpoHtml = `\n<div style=\"font-family: Arial, sans-serif; max-width: 650px; color: #1f2937; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px;\">\n  <h2 style=\"color: #dc2626; margin-top: 0;\">Fallo de Ejecución en Automatización</h2>\n  <p style=\"font-size: 14px;\">Se ha producido un error crítico que ha interrumpido el flujo diario de Revenue Management.</p>\n  <table style=\"width: 100%; border-collapse: collapse; font-size: 13px; margin: 16px 0;\">\n    <tr style=\"background: #fef2f2;\">\n      <td style=\"padding: 8px; border: 1px solid #fecaca; font-weight: bold; width: 30%;\">Workflow:</td>\n      <td style=\"padding: 8px; border: 1px solid #fecaca;\">${wfNombre}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;\">Nodo con Fallo:</td>\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb; color: #b91c1c; font-weight: bold;\">${nodoFallido}</td>\n    </tr>\n    <tr style=\"background: #f9fafb;\">\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;\">Fecha y Hora:</td>\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb;\">${fechaHora}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;\">ID de Ejecución:</td>\n      <td style=\"padding: 8px; border: 1px solid #e5e7eb;\"><code>${executionId}</code></td>\n    </tr>\n    <tr style=\"background: #fef2f2;\">\n      <td style=\"padding: 8px; border: 1px solid #fecaca; font-weight: bold;\">Mensaje:</td>\n      <td style=\"padding: 8px; border: 1px solid #fecaca; color: #991b1b;\">${mensajeError}</td>\n    </tr>\n  </table>\n  <details style=\"margin-top: 14px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 8px 12px;\">\n    <summary style=\"font-size: 12px; font-weight: bold; color: #475569; cursor: pointer;\">Ver Traza Técnica (Stack Trace)</summary>\n    <pre style=\"font-size: 11px; color: #334155; white-space: pre-wrap; margin-top: 8px;\">${stackTrace}</pre>\n  </details>\n</div>\n`;\n\nreturn [{\n  json: {\n    asunto,\n    cuerpoHtml,\n    emailDestino: 'anamvilaglez@gmail.com'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6784,
+        336
+      ],
+      "id": "8bdc3541-f98e-43ce-870c-9acf050f359b",
+      "name": "Tratamiento de Errores"
+    },
+    {
+      "parameters": {
+        "jsCode": "function getNodeData(nodeName) {\n  try {\n    return $(nodeName).first()?.json || {};\n  } catch (e) {\n    return {};\n  }\n}\n\nconst analisis = getNodeData('Data Quant');\n// Busca primero el nodo consolidado; si no existe, toma Revenue Manager\nconst prev = getNodeData('Consolidar Reporte Diario').reporte_pricing_completo \n  ? getNodeData('Consolidar Reporte Diario') \n  : getNodeData('Revenue Manager');\nconst mkt = getNodeData('Sales & Marketing');\n\nreturn [{\n  json: {\n    reporte_analisis: analisis.text || analisis.output || \"\",\n    reporte_pricing: prev.reporte_pricing_completo || prev.text || prev.output || \"\",\n    reporte_marketing: mkt.text || mkt.output || \"\"\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2592,
+        -480
+      ],
+      "id": "794edd35-6f8c-4461-a052-03a9613c163d",
+      "name": "Empaquetar Informes"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Aquí tienes los datos del sistema: {{ JSON.stringify($json.calculo_metricas) }}\n\nPeriodos históricos similares recuperados por similitud de características (no generados por IA): {{ $json.contexto_historico }}\n\nHOTEL: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.nombre || 'Hotel' }} (Capacidad: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.capacidad_total || 75 }} habitaciones)",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Eres un Analista de Datos Cuantitativos especializado en Revenue Management hotelero. Tu única misión es analizar objetivamente el JSON y el texto de contexto proporcionados para extraer los hechos cuantitativos más relevantes. Actúa como un científico de datos: observa, mide y describe; nunca interpretes desde un punto de vista comercial ni propongas acciones.\n\n## OBJETIVO\nAnalizar exclusivamente la información proporcionada para identificar patrones, tendencias, anomalías, segmentación de demanda y relaciones cuantitativas clave.\n\n---\n\n## REGLAS CRÍTICAS DE EXTRACCIÓN\n1. **OBLIGACIÓN DE COMPLETITUD:** Procesa OBLIGATORIAMENTE el bloque consolidado inicial Y TODOS Y CADA UNO de los días presentes en el array `diario` (desde el primero hasta el último), sin omitir ninguno.\n2. **RANGO DE FECHAS EN CONSOLIDADO:** En el bloque consolidado, el periodo debe ser el rango exacto entre la primera y la última fecha del array `diario` (ej. 17/10/2026 - 30/10/2026). NUNCA copies fechas de los ejemplos.\n3. **REGLA DE COMPARATIVAS HISTÓRICAS:**\n   - **En el Consolidado:** Contrasta exclusivamente contra los datos del texto anexo (\"Periodos históricos similares recuperados\").\n   - **En los Bloques Diarios:** Queda TERMINANTEMENTE PROHIBIDO usar el texto anexo. Extrae obligatoria y literalmente las cifras de `comparativas.ocupacion_yoy_pp` y `comparativas.adr_yoy_pct` del JSON. No calcules diferencias a mano.\n4. **EXTRACCIÓN DE PRICING Y CANAL:**\n   - En el Consolidado: escribe \"ADR por canal: NO APLICA A NIVEL CONSOLIDADO\".\n   - En Diario: transcribe el ADR observado real de cada canal desde `pricing_dinamico.pricing_por_canal.[Canal].adr_observado` (o `canal_detalle.[Canal].adr_medio`). Si no hay dato, pon \"SIN DATO\".\n5. **SEGMENTACIÓN Y ALERTAS:** \n   - Extrae el tipo de habitación con mayor venta (`perfil_demanda.tipo`), el país con mayor cuota de `pais_detalle` y los niveles de alerta presentes en el objeto `riesgos`.\n6. **FORMATO Y TERMINACIÓN:** \n   - No uses guiones (`-`) sueltos entre líneas ni numeraciones.\n   - Usa exclusivamente el esquema exacto de 6 líneas por bloque.\n   - El último carácter debe ser la última palabra de la línea \"Factores asociados\" del último día. Sin notas ni conclusiones.\n\n---\n\n## FORMATO DE SALIDA ESTRICTO\n(Repite este bloque para el Consolidado y luego para cada día del array `diario`):\n\n**Periodo:** [Rango de fechas para consolidado | Fecha YYYY-MM-DD para diario]\n**Hallazgo:** [Descripción cuantitativa neutra de desviaciones frente a previsión, ritmo de pace o anomalías]\n**Evidencia:** Ocupación del [X]% (Prevista: [Y]%), ADR de [Z] €, RevPAR de [W] € y Pickup 7d de [N] habs. YoY: Ocupación [comparativas.ocupacion_yoy_pp] pp | ADR [comparativas.adr_yoy_pct]% [o comparativa histórica en consolidado].\n**Demanda y Riesgos:** Tipo dominante: [tipo_moda] | Mercado líder: [país_top] | Riesgo ocupación: [riesgos.ocupacion_baja] | Riesgo ritmo reserva: [riesgos.ritmo_reserva_debil].\n**Distribución y Pricing Canal:** Canal predominante: [canal_moda]. ADR observado por canal: Web: [valor]€ | Booking: [valor]€ | Expedia: [valor]€ | Teléfono: [valor]€ | Walk-in: [valor]€\n**Factores asociados:** [Festivos / Vacaciones / Clima o \"Ninguno explícito\"]\n\n---\n\n## EJEMPLOS DE REFERENCIA (FEW-SHOT)\n\n### EJEMPLO 1 (Bloque Consolidado)\n\nEntrada (resumen):\nRango: 01/11/2026 al 14/11/2026 | Total ocupación: 74.20% (prevista 76.50%) | ADR medio: 125.40 € | RevPAR medio: 93.05 € | Pickup 7d medio: 2 habs | Tipo dominante: Suite (70%) | Riesgo pace: Normal | Histórico anexo (03-09/11/2025): Ocupación 70.10%, ADR 115.00 €, RevPAR 80.61 €\n\nSalida esperada:\n**Periodo:** 01/11/2026 - 14/11/2026 (Consolidado)\n**Hallazgo:** Desempeño global con métricas de ingresos superiores al histórico comparable, con ocupación real por debajo de la previsión.\n**Evidencia:** Ocupación del 74.20% (Prevista: 76.50%), ADR de 125.40 €, RevPAR de 93.05 € y Pickup 7d de 2 habs. Histórico comparable (03-09/11/2025: Ocupación 70.10%, ADR 115.00 €, RevPAR 80.61 €): RevPAR y ADR superiores.\n**Demanda y Riesgos:** Tipo dominante: Suite (70.0% mix) | Mercado líder: España | Riesgo ocupación: Bajo | Riesgo ritmo reserva: Normal.\n**Distribución y Pricing Canal:** Canal predominante: Booking (85.0% mix). ADR por canal: NO APLICA A NIVEL CONSOLIDADO.\n**Factores asociados:** Ninguno explícito.\n\n---\n\n### EJEMPLO 2 (Bloque Diario Individual)\n\nEntrada (resumen):\nFecha: 2026-10-17 | Ocupación: 78.67% (prevista 81.99%) | ADR: 130.14 € | RevPAR: 106.70 € | Pickup 7d: 3 habs | comparativas: ocupacion_yoy_pp: 14, adr_yoy_pct: 8.1 | tipo: Suite (21 habs, 177.48€) | pais: España (36 habs) | riesgos: ocupacion_baja: \"Bajo\", ritmo_reserva_debil: \"Alerta\" | Canal moda: Booking | precios: Web: 127.25, Booking: 132.22, Expedia: 120.00, Teléfono: 122.50, Walk-in: 143.80\n\nSalida esperada:\n**Periodo:** 2026-10-17\n**Hallazgo:** Ocupación real inferior a la prevista en 3.32 pp con ritmo semanal bajo y alerta en ritmo de reserva.\n**Evidencia:** Ocupación del 78.67% (Prevista: 81.99%), ADR de 130.14 €, RevPAR de 106.70 € y Pickup 7d de 3 habs. YoY: Ocupación +14.0 pp | ADR +8.1%.\n**Demanda y Riesgos:** Tipo dominante: Suite (21 habs, ADR 177.48€) | Mercado líder: España (36 habs) | Riesgo ocupación: Bajo | Riesgo ritmo reserva: Alerta.\n**Distribución y Pricing Canal:** Canal predominante: Booking. ADR observado por canal: Web: 127.25€ | Booking: 132.22€ | Expedia: 120.00€ | Teléfono: 122.50€ | Walk-in: 143.80€\n**Factores asociados:** Ninguno explícito."
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        -4096,
+        -48
+      ],
+      "id": "5df5d758-8238-4fb5-9d18-e6388f688e32",
+      "name": "Data Quant"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=HOTEL: {{ $json.hotel }}\nFECHA A ANALIZAR: {{ $json.fecha }}\n\nDATOS DEL DÍA:\n- Ocupación: {{ $json.ocupacion_actual }}% (Prevista: {{ $json.ocupacion_prevista }}%) | Pickup 7d: {{ $json.pickup_7d }} habs | Estado Pace: {{ $json.estado_pace }} | Riesgo Ocupación: {{ $json.riesgo_ocupacion }}\n- Mix y Demanda: Canal dominante: {{ $json.canal_moda }} | Tipo dominante: {{ $json.tipo_moda }} (ADR: {{ $json.tipo_adr }}€) | Mercado: {{ $json.pais_top }}\n- Guía Dirección: ADR Referencia: {{ $json.adr_referencia }}€ (Factor: {{ $json.factor_direccion }} | Ajuste: {{ $json.ajuste_pct }}%)\n- ADR Observado Canales: Web: {{ $json.precios_observados.web }}€ | Booking: {{ $json.precios_observados.booking }}€ | Expedia: {{ $json.precios_observados.expedia }}€ | Teléfono: {{ $json.precios_observados.telefono }}€ | Walk-in: {{ $json.precios_observados.walkin }}€",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Eres un Senior Revenue Manager. Tu misión es definir la estrategia prescriptiva diaria de pricing por canal, restricciones operativas e inventario para la fecha recibida.\n\nREGLAS:\n1. Ancla las tarifas al ADR Referencia de Dirección.\n2. Web/Directo: alrededor de Referencia (-3% a +2%).\n3. OTAs (Booking/Expedia): recargo del +10% al +18% sobre Web para absorber comisiones.\n4. Walk-in: recargo de última hora (+10% a +25%) si ocupación >75%; sin recargo si <70%. Teléfono alineado con Web.\n5. No inventes datos fuera de la fecha proporcionada. Responde exclusivamente con la plantilla.\n\nFORMATO DE SALIDA ESTRICTO:\n\n### Fecha: YYYY-MM-DD\n\n**Situación detectada**\n- Volumen y Pace: Ocupación [X]% (Prevista: [Y]%), Pickup 7d: [N] habs | Estado Pace: [Alerta/Normal/Retrasado].\n- Mix y Canales: Canal dominante: [canal] | Tipología líder: [tipo] (ADR obs: [Z]€) | Mercado líder: [país].\n- Directriz Dirección: ADR Referencia: [valor]€ (Factor: [factor]).\n\n**Estrategia de Pricing Propuesta y Restricciones por Canal**\n- **Web / Directo:**\n  - ADR Sugerido: [Cifra €] ([Breve ajuste vs referencia])\n  - Restricciones: [MinLOS, cancelación]\n- **OTAs (Booking / Expedia):**\n  - ADR Sugerido: Booking [Cifra €] | Expedia [Cifra €] ([Diferencial % vs Web])\n  - Restricciones: [MinLOS, cupo asignado]\n- **Tradicionales (Teléfono / Walk-in):**\n  - ADR Sugerido: Teléfono [Cifra €] | Walk-in [Cifra €]\n  - Restricciones: [Condición de venta o mostrador]\n\n**Estrategia por Tipología de Habitación**\n- **Suites:** [Tarifa o directriz de upselling/protección]\n- **Dobles / Individuales:** [Tarifa o directriz de volumen]\n\n**Directrices de Yielding e Inventario**\n- Yielding: [Disparador según evolución de pickup en 48h].\n- Inventario: [Distribución de cupos: % Web vs % OTAs].\n\n**Justificación Estratégica**\n[Explicación económica concisa del impacto en RevPAR y margen neto].\n\n### Fecha: 2026-10-21\n\n**Situación detectada**\n- Ocupación: 61.3% (prevista: 68.0%) | Pickup 7d: 1 hab | Pace: Alerta.\n- Canal dominante: Web (38%) | Tipo líder: Doble (ADR: 92.00€) | Mercado: España.\n- Dirección: ADR Referencia 104.50€ (Factor: 0.95).\n\n**Estrategia de Pricing y Canales**\n- Web / Directo: 102.00€ (-2.4% vs ref) | MinLOS 1, cancelación 18:00h llegada.\n- OTAs (Booking / Expedia): 116.00€ (+13.7% vs Web) | MinLOS 1, cupo 100% abierto.\n- Directo (Teléfono / Walk-in): Teléfono 102.00€ | Walk-in 102.00€ (sin recargo mostrador).\n\n**Tipología, Yielding e Inventario**\n- Tipología: Suites a 145.00€; abrir Doble e Individual en todos los canales.\n- Yielding: Tarifa móvil OTA (-10%) si a falta de 24h ocupación <65%.\n- Inventario: 60% Web / 40% OTAs.\n\n**Justificación**\nPrioridad volumen: traspaso de rebaja a venta directa para captar demanda residual sin comisiones.\n\n### Fecha: 2026-10-23\n\n**Situación detectada**\n- Ocupación: 84.0% (prevista: 82.5%) | Pickup 7d: 5 habs | Pace: Acelerado.\n- Canal dominante: Booking (55%) | Tipo líder: Suite (ADR: 182.00€) | Mercado: España / Portugal.\n- Dirección: ADR Referencia 138.00€ (Factor: 1.15).\n\n**Estrategia de Pricing y Canales**\n- Web / Directo: 139.00€ (+0.7% vs ref) | MinLOS 2 obligatorio, no reembolsable.\n- OTAs (Booking / Expedia): 162.00€ (+16.5% vs Web) | MinLOS 2, cupo máx 3 habs.\n- Directo (Teléfono / Walk-in): Teléfono 139.00€ | Walk-in 170.00€ (+22.3% recargo por alta ocupación).\n\n**Tipología, Yielding e Inventario**\n- Tipología: Suite a 195.00€ solo en Web; Dobles residuales solo en motor propio.\n- Yielding: Subir a 145.00€ en Web y Stop Sale en OTAs si ocupación alcanza 88%.\n- Inventario: 85% Web / 15% OTAs.\n\n**Justificación**\nBlindaje de fin de semana con MinLOS 2 y recargo OTA para maximizar RevPAR neto y venta directa."
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        -3520,
+        -288
+      ],
+      "id": "4027d552-d8fd-4831-a44e-2dc688eccffe",
+      "name": "Revenue Manager"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=HOTEL: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.nombre || 'Hotel' }}\n\nESTRATEGIA DIARIA DEL REVENUE MANAGER (14 DÍAS):\n{{ $json.reporte_pricing_completo || $json.text || $json.output }}\n\nCONTEXTO EXTERNO Y DATOS DE MERCADO DIARIOS:\n{{ $('Calcular Similitud').first().json.calculo_metricas.diario.map(function(d) { return '- ' + d.fecha + ': Ocupación ' + (d.ocupacion ? d.ocupacion.prevista : 0) + '% | Pickup 7d: ' + (d.pickup_pace ? d.pickup_pace.pickup_7 : 0) + ' habs | Pace: ' + (d.riesgos ? d.riesgos.ritmo_reserva_debil : 'Normal') + ' | Clima: ' + (d.contexto_externo && d.contexto_externo.clima ? d.contexto_externo.clima.temp_max + '°C, ' + d.contexto_externo.clima.precipitacion + 'mm' : 'S/D') + ' | Festivo: ' + (d.contexto_externo && d.contexto_externo.es_festivo ? 'Sí' : 'No') + ' | Vacaciones: ' + (d.contexto_externo && d.contexto_externo.es_vacaciones_escolares ? 'Sí' : 'No') + ' | Hab. Tractor: ' + (d.perfil_demanda ? d.perfil_demanda.tipo : 'Doble'); }).join('\\n') }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Eres el Director de Marketing y Comercial de un hotel independiente. Tu misión es diseñar iniciativas comerciales tácticas e inmediatas para dinamizar la demanda en las ventanas críticas identificadas por el Revenue Manager, respetando al 100% la estrategia tarifaria establecida.\n\n## OBJETIVO\nIdentificar y actuar ÚNICAMENTE sobre las ventanas temporales que presentan riesgo o debilidad (baja ocupación <75%, desaceleración de pickup o meteorología adversa), proponiendo acciones de valor añadido aplicables en 24-48 horas.\n\n---\n\n## REGLAS ESTRATÉGICAS\n\n1. **FILTRADO DE DÍAS SANOS:**\n   - No diseñes campañas para días con ocupación consolidada (>75%) y pickup normal. Si un tramo no necesita apoyo, descártalo o indícalo brevemente.\n   - Concéntrate en valles de ocupación (ej. días <70% como el 26/10), caídas de ritmo de reservas y días con previsión de lluvia/frío.\n\n2. **PROHIBICIÓN ESTRICTA DE DESCUENTOS Y MENCIÓN DE PRECIOS:**\n   - TERMINANTEMENTE PROHIBIDO ofrecer rebajas de precio, códigos de descuento porcentual o bajadas de tarifa.\n   - Prohibido mencionar cifras monetarias de ADR (esa función pertenece exclusivamente a Revenue Management).\n   - Trabaja exclusivamente con **valor añadido**: empaquetado (gastronomía, spa, párking), upgrades condicionales de habitación y flexibilización operativa (early check-in, late check-out).\n\n3. **ACCIONABILIDAD A CORTO PLAZO (TÁCTICA VS ESTRATÉGICA):**\n   - PROHIBIDO proponer proyectos a medio/largo plazo como crear programas de fidelización desde cero, campañas con influencers o cambios estructurales de producto.\n   - Toda acción debe poder ejecutarse hoy mismo vía: base de datos local (emailing segmentado a repetidores), notoriedad en web propia o argumentario para recepción en llamadas entrantes.\n\n4. **INTEGRACIÓN DEL CONTEXTO REAL:**\n   - Si la previsión meteorológica indica lluvia o bajas temperaturas, orienta la experiencia al interior (gastronomía local, chimenea, bienestar, visitas culturales cubiertas).\n   - Si coincide con festivos o escapadas de fin de semana, segmenta hacia ocio/parejas; en días laborables, enfoca a corporativo y venta directa de proximidad.\n\n---\n\n## FORMATO DE SALIDA ESTRICTO\n\n### Ventana Crítica: [Rango de fechas exacto YYYY-MM-DD o Fecha individual]\n\n**Situación y Diagnóstico**\n[Breve descripción del problema: nivel de ocupación en riesgo, ritmo de reserva débil o impacto del clima].\n\n**Objetivo Comercial**\n[Objetivo concreto: ej. drenar habitaciones estándar, asegurar pernoctaciones clave o estimular escapadas de proximidad].\n\n**Iniciativas Tácticas Inmediatas**\n- **Iniciativa 1 (Web / Venta Directa):** [Acción de valor añadido empaquetada lista para activar].\n- **Iniciativa 2 (Base de Datos / Repetidores):** [Comunicación segmentada a clientes históricos con ventaja de valor].\n- **Iniciativa 3 (Recepción / Mostrador):** [Argumentario de upselling o servicio añadido en llamada].\n\n**Segmento Objetivo**\n[Perfil concreto: corporativo de proximidad, parejas de fin de semana, escapada gastronómica, etc.].\n\n**Justificación Operativa**\n[Por qué estas acciones resuelven la debilidad detectada sin erosionar el posicionamiento ni el margen neto].\n\n### Ventana Crítica: 2026-10-21\n\n**Situación y Diagnóstico**\nOcupación débil (61.3%), pickup plano y lluvia prevista (18 mm, 14°C).\n\n**Objetivo Comercial**\nDrenar habitaciones estándar mediante valor añadido interior sin tocar tarifa base.\n\n**Iniciativas Tácticas Inmediatas**\n- Web: Paquete \"Escapada Interior\": Doble a tarifa oficial con menú degustación y late check-out 14:00h.\n- Base de Datos: Emailing corporativo local destacando wifi de alta velocidad y parking cubierto gratuito.\n- Recepción: Desayuno buffet de cortesía para reservas telefónicas cerradas en la llamada.\n\n**Segmento y Justificación**\nCorporativo y parejas de proximidad. Se ofrece valor con servicios de bajo coste marginal para contrarrestar el mal tiempo sin devaluar el ADR.\n\n### Ventana Crítica: 2026-10-26\n\n**Situación y Diagnóstico**\nSuelo mensual de ocupación (64.0%), demanda contraída hacia tipo Individual tras el fin de semana.\n\n**Objetivo Comercial**\nIncentivar la extensión de estancias del domingo y captar pernoctaciones de negocios.\n\n**Iniciativas Tácticas Inmediatas**\n- Web: \"Pasa el Lunes\": Extensión de estancia domingo-lunes con 20€ de crédito en cafetería.\n- Base de Datos: Aviso a cuentas empresa habituales: upgrade garantizado a Suite a tarifa de Doble.\n- Recepción: Ofrecer en check-out del domingo prolongar una noche con late check-out gratuito.\n\n**Segmento y Justificación**\nProfesionales y teletrabajadores. Moviliza habitaciones vacías usando habitaciones superiores disponibles sin alterar los precios públicos del Revenue Manager."
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        -2944,
+        -448
+      ],
+      "id": "0a780356-e374-489a-99d4-c1a2b231e21a",
+      "name": "Sales & Marketing"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 4000,
+          "temperature": 0,
+          "topP": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -4016,
+        176
+      ],
+      "id": "0787c1bc-a36f-416b-8005-cf4ac9138ff0",
+      "name": "OpenAI Chat Model - Data Quant",
+      "credentials": {
+        "openAiApi": {
+          "id": "kIp27glFg4iGzNso",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "===TABLA DIARIA DE PRECIOS CALCULADA:\n{{ $('Calcular Similitud').first().json.calculo_metricas.diario.map(function(d) { return d.fecha + ' -> Web: ' + ((d.pricing_dinamico && d.pricing_dinamico.pricing_por_canal && d.pricing_dinamico.pricing_por_canal.Web) ? d.pricing_dinamico.pricing_por_canal.Web.adr_sugerido : (d.pricing_dinamico ? d.pricing_dinamico.adr_sugerido : 'S/D')) + '€ | OTAs: ' + ((d.pricing_dinamico && d.pricing_dinamico.pricing_por_canal && d.pricing_dinamico.pricing_por_canal.Booking) ? d.pricing_dinamico.pricing_por_canal.Booking.adr_sugerido : (d.pricing_dinamico ? d.pricing_dinamico.adr_sugerido : 'S/D')) + '€ | Teléfono: ' + ((d.pricing_dinamico && d.pricing_dinamico.pricing_por_canal && d.pricing_dinamico.pricing_por_canal.Teléfono) ? d.pricing_dinamico.pricing_por_canal.Teléfono.adr_sugerido : (d.pricing_dinamico ? d.pricing_dinamico.adr_sugerido : 'S/D')) + '€ | Walk-in: ' + ((d.pricing_dinamico && d.pricing_dinamico.pricing_por_canal && d.pricing_dinamico.pricing_por_canal['Walk-in']) ? d.pricing_dinamico.pricing_por_canal['Walk-in'].adr_sugerido : (d.pricing_dinamico ? d.pricing_dinamico.adr_sugerido : 'S/D')) + '€'; }).join('\\n') }}\n\n==INFORMES DEPARTAMENTALES:\n-- ANÁLISIS CUANTITATIVO (Data Quant) --\n{{ $json.reporte_analisis }}\n\n-- REPORTE PRICING YIELDING (Revenue Manager) --\n{{ $json.reporte_pricing }}\n\n-- PROPUESTA COMERCIAL TÁCTICA (Sales & Marketing) --\n{{ $json.reporte_marketing }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Eres el Director de Operaciones y Revenue Management del hotel.\n\nTu misión es transformar los informes analíticos, las recomendaciones diarias de precios y las propuestas comerciales en una Hoja de Ruta Ejecutiva con directrices tarifarias claras para Dirección, Recepción y Channel Manager/PMS.\n\n## REGLAS CRÍTICAS DE EJECUCIÓN\n\n1. PROHIBICIÓN DE EVASIVAS: Prohibido escribir \"Ver tabla\", \"Consultar anexo\" o referencias genéricas. Indica las tarifas monetarias en euros (€) para cada ventana.\n2. ESTRUCTURA OPERATIVA EN 4 VENTANAS OBLIGATORIAS: Desglosa las directrices en estas 4 ventanas:\n   - Ventana 1: 17 al 19 de octubre de 2026 (Entrada inmediata)\n   - Ventana 2: 20 al 22 de octubre de 2026 (Midweek / Transición comercial)\n   - Ventana 3: 23 al 25 de octubre de 2026 (Fin de semana / Alta demanda)\n   - Ventana 4: 26 al 30 de octubre de 2026 (Midweek / Valle del 26/10)\n3. DIFERENCIACIÓN POR CANAL:\n   - Web Propia / Motor: Tarifa directa optimizada.\n   - OTAs (Booking / Expedia): Tarifa con recargo por comisión (+10% a +18% sobre Web).\n   - Canal Directo (Teléfono): Tarifa alineada con Web.\n   - Mostrador (Walk-in): Con recargo si ocupación >75%; sin recargo si ocupación <70%.\n- ASIGNACIÓN DE CUPOS: La suma total de cupos asignados debe ser exactamente el 100% del inventario disponible (ejemplo: 70% Web / 30% OTAs; o 60% Web / 40% OTAs). Prohibido asignar porcentajes cuya suma exceda el 100%.\n4. ESTILO: Claro, profesional y enfocado en la operativa hotelera diaria. Sin metatexto ni notas finales.\n\n---\n\n## FORMATO DE SALIDA ESTRICTO\n\n# 📊 Hoja de Ruta Ejecutiva: Revenue y Operaciones\n\n## 📊 Diagnóstico Operativo del Periodo\n- **Balance General:** Ocupación prevista [X]% vs real [Y]% (Gap: [Z] pp) | RevPAR medio: [A]€ | ADR actual: [B]€.\n- **Comportamiento del Ritmo (Pickup):** [N] habs/semana | Diagnóstico de curva de reservas: [Acelerado / Alerta / Retrasado].\n\n---\n\n## 📉 Alertas de Demanda y Factores Críticos\n- **Días Críticos / Riesgo:** [Fechas exactas con ocupación bajo el 70% o contracción de pickup].\n- **Variables Externas:** [Condiciones meteorológicas relevantes, festivos o calendario].\n- **Presión de Distribución:** [Canal dominante actual y dependencia de intermediación].\n\n---\n\n## 💰 Directrices de Carga en Canales (PMS & Channel Manager)\n\n### Ventana 1: 17 al 19 de octubre de 2026\n- **Web Propia / Motor:**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, política de cancelación]\n  - Asignación de cupo: [Distribución % o cupo protegido]\n- **OTAs (Booking.com / Expedia):**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, cupo máximo por OTA]\n  - Regla de cierre: [Condición de parada de ventas si aplica]\n- **Canal Directo (Teléfono / Mostrador):**\n  - Tarifa telefónica: [Cifra exacta]€\n  - Tarifa mostrador (Walk-in): [Cifra exacta]€\n  - Política de cierre: [Condición de valor añadido o confirmación]\n\n### Ventana 2: 20 al 22 de octubre de 2026\n- **Web Propia / Motor:**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, política de cancelación]\n  - Asignación de cupo: [Distribución % o cupo protegido]\n- **OTAs (Booking.com / Expedia):**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, cupo máximo por OTA]\n  - Regla de cierre: [Condición de parada de ventas si aplica]\n- **Canal Directo (Teléfono / Mostrador):**\n  - Tarifa telefónica: [Cifra exacta]€\n  - Tarifa mostrador (Walk-in): [Cifra exacta]€\n  - Política de cierre: [Condición de valor añadido o confirmación]\n\n### Ventana 3: 23 al 25 de octubre de 2026\n- **Web Propia / Motor:**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, política de cancelación]\n  - Asignación de cupo: [Distribución % o cupo protegido]\n- **OTAs (Booking.com / Expedia):**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, cupo máximo por OTA]\n  - Regla de cierre: [Condición de parada de ventas si aplica]\n- **Canal Directo (Teléfono / Mostrador):**\n  - Tarifa telefónica: [Cifra exacta]€\n  - Tarifa mostrador (Walk-in): [Cifra exacta]€\n  - Política de cierre: [Condición de valor añadido o confirmación]\n\n### Ventana 4: 26 al 30 de octubre de 2026\n- **Web Propia / Motor:**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, política de cancelación]\n  - Asignación de cupo: [Distribución % o cupo protegido]\n- **OTAs (Booking.com / Expedia):**\n  - Tarifa recomendada: [Cifra exacta]€\n  - Restricción: [MinLOS exacto, cupo máximo por OTA]\n  - Regla de cierre: [Condición de parada de ventas si aplica]\n- **Canal Directo (Teléfono / Mostrador):**\n  - Tarifa telefónica: [Cifra exacta]€\n  - Tarifa mostrador (Walk-in): [Cifra exacta]€\n  - Política de cierre: [Condición de valor añadido o confirmación]\n\n---\n\n## ⚡ Reglas Dinámicas de Yielding\n- **Aceleración de Demanda:**\n  - *Condición:* Si pickup suma ≥[X] habitaciones en 48h o ocupación supera [Y]%.\n  - *Acción:* [Subir tarifa en OTAs a [Z]€ o activar MinLOS de [N] noches].\n- **Estancamiento de Demanda:**\n  - *Condición:* Si a [X] horas de llegada la ocupación no alcanza [Y]%.\n  - *Acción:* [Activar tarifa opaca/móvil en OTA con -[Z]% manteniendo web pública].\n\n---\n\n## ✅ Lista de Comprobación Operativa\n1. **[PMS / Channel Manager]:** [Actualización tarifaria y estancias mínimas por ventana].\n2. **[Inventario]:** [Apertura o limitación de cupos en canales intermediados].\n3. **[Recepción / Turnos]:** [Pautas de cotización en llamadas y mostrador].\n4. **[Comercial]:** [Acción promocional de valor añadido para las fechas más débiles].\n5. **[Control]:** [Hora de corte diaria para revisión de métricas en el PMS]."
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        -2368,
+        -592
+      ],
+      "id": "3cf99fab-d29f-4510-a70c-5e3b3205ae90",
+      "name": "Manager Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 8000,
+          "temperature": 0.2,
+          "topP": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -3440,
+        -64
+      ],
+      "id": "5c9faa75-bd91-4ec9-8b60-46c573225d92",
+      "name": "OpenAI Chat Model - Revenue Manager",
+      "credentials": {
+        "openAiApi": {
+          "id": "kIp27glFg4iGzNso",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.3,
+          "topP": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -2864,
+        -224
+      ],
+      "id": "f4f968b6-691d-4b5d-bcdf-2eb95ce4c6ab",
+      "name": "OpenAI Chat Model - Sales & Marketing",
+      "credentials": {
+        "openAiApi": {
+          "id": "kIp27glFg4iGzNso",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 8000,
+          "temperature": 0.2,
+          "topP": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -2288,
+        -368
+      ],
+      "id": "02192097-c8e8-4fff-b142-9d68295e11fc",
+      "name": "OpenAI Chat - Manager",
+      "credentials": {
+        "openAiApi": {
+          "id": "kIp27glFg4iGzNso",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const datosMetricas = $('Call \\'Subflow - Calculo Metricas\\'').first().json || {};\nconst motorAnalitico = datosMetricas.motor_analitico || datosMetricas.calculo_metricas || {};\nconst diario = motorAnalitico.diario || [];\n\nif (!diario.length) {\n  return [];\n}\n\nreturn diario.map(d => ({\n  json: {\n    \"Fecha\": d.fecha,\n    \"Ocupacion_Actual_%\": d.ocupacion?.actual ?? 0,\n    \"Ocupacion_Prevista_%\": d.ocupacion?.prevista ?? 0,\n    \"ADR_EUR\": d.ingresos?.adr ?? 0,\n    \"RevPAR_EUR\": d.ingresos?.revpar ?? 0,\n    \"Pickup_7d\": d.pickup_pace?.pickup_7 ?? 0,\n    \"Festivo\": d.contexto_externo?.es_festivo ? \"Sí\" : \"No\",\n    \"Vacaciones\": d.contexto_externo?.es_vacaciones_escolares ? \"Sí\" : \"No\"\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3744,
+        112
+      ],
+      "id": "1090005b-b54c-42b0-be78-833cb4667973",
+      "name": "Exportar CSV Agente 1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const datosMetricas = $('Call \\'Subflow - Calculo Metricas\\'').first().json || {};\nconst motorAnalitico = datosMetricas.calculo_metricas || {};\nconst diario = motorAnalitico.diario || [];\n\nif (!diario.length) return [];\n\nreturn diario.map(d => ({\n  json: {\n    \"Fecha\": d.fecha,\n    \"Ocupacion_Prevista_%\": d.ocupacion?.prevista ?? 0,\n    \"ADR_Actual_EUR\": d.ingresos?.adr ?? 0,\n    \"ADR_Sugerido_EUR\": d.pricing_dinamico?.adr_sugerido ?? null,\n    \"Ajuste_Pricing_%\": d.pricing_dinamico?.ajuste_pct ?? null,\n    \"Limite_Alcanzado\": d.pricing_dinamico?.limite_alcanzado ? \"Sí\" : \"No\",\n    \"RevPAR_EUR\": d.ingresos?.revpar ?? 0,\n    \"Pickup_7d\": d.pickup_pace?.pickup_7 ?? 0,\n    \"Ritmo_Pace\": d.pickup_pace?.ritmo_pickup ?? null,\n    \"Riesgo_Ocupacion_Baja\": d.riesgos?.ocupacion_baja ?? \"Sin clasificar\"\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3168,
+        -48
+      ],
+      "id": "04649e07-3f81-4338-917c-6d8163337492",
+      "name": "Exportar CSV Agente 2"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "=metricas_hotel_{{ $now.format('yyyy-MM-dd') }}.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -3456,
+        112
+      ],
+      "id": "1187247c-c9b5-43cd-9224-3fb2e0e4db74",
+      "name": "Guardar Resultado Agente 1"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "=pricing_revenue_manager_{{ $now.format('yyyy-MM-dd') }}.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -2880,
+        -48
+      ],
+      "id": "f603dd8c-958a-44e4-b7b3-e99e287100be",
+      "name": "Guardar Resultado Agente 2"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "=contexto_marketing_{{ $now.format('yyyy-MM-dd') }}.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -2304,
+        -192
+      ],
+      "id": "4ca0c1e5-b319-4620-b1e6-83c8e18768d6",
+      "name": "Guardar Resultado Agente 3"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1168,
+        "width": 2016,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4128,
+        -848
+      ],
+      "id": "09585b19-1054-42aa-982e-4b659f182679",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "jsCode": "const diario = $('Calcular Similitud').first().json.calculo_metricas?.diario || [];\nconst hotel = $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.nombre || 'Hotel Ejemplo Baiona';\n\nreturn diario.map(d => ({\n  json: {\n    hotel,\n    fecha: d.fecha,\n    ocupacion_actual: d.ocupacion?.actual ?? 0,\n    ocupacion_prevista: d.ocupacion?.prevista ?? 0,\n    pickup_7d: d.pickup_pace?.pickup_7 ?? 0,\n    estado_pace: d.riesgos?.ritmo_reserva_debil ?? 'Normal',\n    riesgo_ocupacion: d.riesgos?.ocupacion_baja ?? 'Bajo',\n    canal_moda: d.distribucion?.canal_moda ?? 'Booking',\n    tipo_moda: d.perfil_demanda?.tipo ?? 'Suite',\n\n    tipo_adr: d.perfil_demanda?.adr_medio ?? d.perfil_demanda?.adr ?? 0,\n    pais_top: d.perfil_demanda?.pais_top ?? 'España',\n    adr_referencia: d.pricing_dinamico?.adr_sugerido ?? 0,\n    factor_direccion: d.pricing_dinamico?.factor_total_aplicado ?? 1,\n    ajuste_pct: d.pricing_dinamico?.ajuste_pct ?? 0,\n    precios_observados: {\n      web: d.pricing_dinamico?.pricing_por_canal?.Web?.adr_observado ?? 'SIN DATO',\n      booking: d.pricing_dinamico?.pricing_por_canal?.Booking?.adr_observado ?? 'SIN DATO',\n      expedia: d.pricing_dinamico?.pricing_por_canal?.Expedia?.adr_observado ?? 'SIN DATO',\n      telefono: d.pricing_dinamico?.pricing_por_canal?.Teléfono?.adr_observado ?? 'SIN DATO',\n      walkin: d.pricing_dinamico?.pricing_por_canal?.['Walk-in']?.adr_observado ?? 'SIN DATO'\n    }\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3744,
+        -192
+      ],
+      "id": "df879e64-6d34-4f4f-b2f4-89b207c2c41d",
+      "name": "Transformador"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -3168,
+        -336
+      ],
+      "id": "7f62cd05-2dba-4ab4-9398-863dc453450e",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 384,
+        "width": 1984,
+        "color": "#A6A359"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -6160,
+        -272
+      ],
+      "id": "5adbede3-3c47-404a-b7d2-54f5377ab5f9",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 592,
+        "width": 736,
+        "color": "#7CF490"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2112,
+        -720
+      ],
+      "id": "8d5f82d9-b59d-4e1c-9b47-7857a770f84b",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3808,
+        -192
+      ],
+      "typeVersion": 1,
+      "id": "f3bba64a-e0c8-44ab-b606-4d4fee21a5c6",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "formTitle": "Lanzamiento Ad-Hoc: Revenue Management",
+        "formDescription": "Selecciona los parámetros para generar el informe y plan operativo. Si dejas la fecha vacía, se usará el día de hoy.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Hotel",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Hotel Ejemplo Baiona"
+                  },
+                  {
+                    "option": "Hotel Ejemplo Vigo"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Horizonte de Análisis",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Próximos 7 días"
+                  },
+                  {
+                    "option": "Próximos 14 días (Estándar)"
+                  },
+                  {
+                    "option": "Próximos 30 días (Mes completo)"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Fecha de Inicio",
+              "fieldType": "date"
+            },
+            {
+              "fieldLabel": "Email de destino (Opcional)"
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -7008,
+        48
+      ],
+      "id": "62e83889-6829-4b8c-b43c-6adc9e283659",
+      "name": "Formulario Petición Ad-Hoc",
+      "webhookId": "71a1ddb5-e093-4b46-a2ce-83fcb4e13a90"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nconst hoy = new Date().toISOString().split('T')[0];\n\nconst esForm = item.Hotel !== undefined || item['Horizonte de Análisis'] !== undefined;\n\nlet hotel_id = undefined;\nlet nombre = undefined;\nlet periodo = undefined;\nlet fecha_inicio = hoy;\nlet email_destino = 'anamvilaglez@gmail.com';\n\nconst mapaIds = {\n  'Hotel Ejemplo Baiona': 'hotel_baiona_01',\n  'Hotel Ejemplo Vigo': 'hotel_vigo_01'\n};\n\nif (esForm) {\n  nombre = item['Hotel']; \n  hotel_id = mapaIds[nombre] || 'ID_NO_ENCONTRADO'; \n\n  periodo = item['Horizonte de Análisis'];\n  fecha_inicio = item['Fecha de Inicio'] ? item['Fecha de Inicio'].split('T')[0] : hoy;\n  \n  if (item['Email de destino (Opcional)']) {\n    email_destino = item['Email de destino (Opcional)'];\n  }\n}\n\nreturn [{\n  json: {\n    es_adhoc: esForm,\n    hotel_id: hotel_id,\n    nombre: nombre,\n    periodo: periodo,\n    fecha_inicio: fecha_inicio,\n    email_destino: email_destino\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6784,
+        -48
+      ],
+      "id": "88233283-78ab-4cb0-bcaa-5254c7a37ace",
+      "name": "Integración"
+    },
+    {
+      "parameters": {
+        "jsCode": "let datosMetricas = {};\ntry {\n  datosMetricas = $('Call \\'Subflow - Calculo Metricas\\'').first().json || {};\n} catch (e) {}\n\n// Fallback por si la estructura se llama diferente o está en el nodo de Normalizar\nif (!datosMetricas.calculo_metricas && !datosMetricas.motor_analitico) {\n  try { datosMetricas = $('Normalizar Periodo Actual').first().json || {}; } catch (e) {}\n}\n\nconst motorAnalitico = datosMetricas.calculo_metricas || datosMetricas.motor_analitico || {};\nconst diario = motorAnalitico.diario || [];\n\n// En lugar de hacer 'return []' y detener el flujo, enviamos una fila de aviso\nif (!diario.length) {\n  return [{\n    json: {\n      \"Fecha\": \"SIN DATOS\",\n      \"Ocupacion_Prevista_%\": 0,\n      \"Estado_Ocupacion\": \"Error al leer diario\",\n      \"Festivo\": \"No\",\n      \"Vacaciones_Escolares\": \"No\",\n      \"Clima_Precipitacion_mm\": null,\n      \"Clima_Temp_Max_C\": null,\n      \"Pickup_7d\": 0,\n      \"Ritmo_Reserva_Debil\": \"Normal\"\n    }\n  }];\n}\n\nreturn diario.map(d => ({\n  json: {\n    \"Fecha\": d.fecha,\n    \"Ocupacion_Prevista_%\": d.ocupacion?.prevista ?? 0,\n    \"Estado_Ocupacion\": d.ocupacion?.estado ?? \"Sin clasificar\",\n    \"Festivo\": d.contexto_externo?.es_festivo ? \"Sí\" : \"No\",\n    \"Vacaciones_Escolares\": d.contexto_externo?.es_vacaciones_escolares ? \"Sí\" : \"No\",\n    \"Clima_Precipitacion_mm\": d.contexto_externo?.clima?.precipitacion ?? null,\n    \"Clima_Temp_Max_C\": d.contexto_externo?.clima?.temp_max ?? null,\n    \"Pickup_7d\": d.pickup_pace?.pickup_7 ?? 0,\n    \"Ritmo_Reserva_Debil\": d.riesgos?.ritmo_reserva_debil ?? \"Normal\"\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2528,
+        -192
+      ],
+      "id": "42c95507-3b9d-4346-be8b-f9fde058d443",
+      "name": "Exportar CSV Agente 3"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Tratamiento de Errores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Alerta Error": {
+      "main": [
+        []
+      ]
+    },
+    "Extraer Resultado del Agente": {
+      "main": [
+        [
+          {
+            "node": "Call Subflow - Generar Informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Subflow - Generar Informe": {
+      "main": [
+        [
+          {
+            "node": "Enviar Gmail",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Subir a Unidad Compartida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Similitud": {
+      "main": [
+        [
+          {
+            "node": "Data Quant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Periodo Actual": {
+      "main": [
+        [
+          {
+            "node": "Traer Historico Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traer Historico Semanal": {
+      "main": [
+        [
+          {
+            "node": "Calcular Similitud",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Creacion Tareas Google Tasks": {
+      "main": [
+        [
+          {
+            "node": "Crear una Tarea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Integración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Subflow - Cargar Configuracion Hotel": {
+      "main": [
+        [
+          {
+            "node": "Schedule Trigger Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger Data": {
+      "main": [
+        [
+          {
+            "node": "Call Subflow - Lectura Datos Externos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Subflow - Lectura Datos Externos": {
+      "main": [
+        [
+          {
+            "node": "Call Subflow Lectura Input Reservas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Subflow Lectura Input Reservas": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Inputs": {
+      "main": [
+        [
+          {
+            "node": "Call 'Subflow - Prediccion'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Subflow - Prediccion'": {
+      "main": [
+        [
+          {
+            "node": "Nodo Agregador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nodo Agregador": {
+      "main": [
+        [
+          {
+            "node": "Call 'Subflow - Calculo Metricas'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Subflow - Calculo Metricas'": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Periodo Actual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratamiento de Errores": {
+      "main": [
+        [
+          {
+            "node": "Enviar Alerta Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Empaquetar Informes": {
+      "main": [
+        [
+          {
+            "node": "Manager Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Exportar CSV Agente 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Quant": {
+      "main": [
+        [
+          {
+            "node": "Exportar CSV Agente 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Transformador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revenue Manager": {
+      "main": [
+        [
+          {
+            "node": "Exportar CSV Agente 2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sales & Marketing": {
+      "main": [
+        [
+          {
+            "node": "Empaquetar Informes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model - Data Quant": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Data Quant",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model - Revenue Manager": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Revenue Manager",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model - Sales & Marketing": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Sales & Marketing",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat - Manager": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Manager Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exportar CSV Agente 1": {
+      "main": [
+        [
+          {
+            "node": "Guardar Resultado Agente 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exportar CSV Agente 2": {
+      "main": [
+        [
+          {
+            "node": "Guardar Resultado Agente 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manager Agent": {
+      "main": [
+        [
+          {
+            "node": "Code - Creacion Tareas Google Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extraer Resultado del Agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformador": {
+      "main": [
+        [
+          {
+            "node": "Revenue Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Sales & Marketing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formulario Petición Ad-Hoc": {
+      "main": [
+        [
+          {
+            "node": "Integración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Integración": {
+      "main": [
+        [
+          {
+            "node": "Call Subflow - Cargar Configuracion Hotel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exportar CSV Agente 3": {
+      "main": [
+        [
+          {
+            "node": "Guardar Resultado Agente 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "c6046ebf-c569-4da8-843e-a7dd8efff46f",
+  "activeVersionId": "c6046ebf-c569-4da8-843e-a7dd8efff46f",
+  "versionCounter": 288,
+  "triggerCount": 2,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-10-07T08:27:40.900Z",
+      "createdAt": "2026-10-07T08:27:40.900Z",
+      "role": "workflow:owner",
+      "workflowId": "DmDkwn1BYxqupOyd",
+      "projectId": "vrzjQQtxE5ouFXJ5",
+      "project": {
+        "updatedAt": "2026-07-10T10:04:26.046Z",
+        "createdAt": "2026-07-10T10:00:38.789Z",
+        "id": "vrzjQQtxE5ouFXJ5",
+        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version c6046ebf",
+    "description": ""
+  }
+}

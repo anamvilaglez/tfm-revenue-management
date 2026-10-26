@@ -1,1 +1,185 @@
-{"updatedAt":"2026-08-01T09:54:17.886Z","createdAt":"2026-07-14T08:46:13.895Z","id":"SMYVrZQScmSUZIKw","name":"Subflow - Prediccion","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"workflowInputs":{"values":[{"name":"periodo"},{"name":"inputModelo","type":"array"},{"name":"modoPrueba","type":"boolean"},{"name":"contextoNegocioSerie","type":"array"},{"name":"competenciaResumen","type":"object"}]}},"type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1.1,"position":[-3040,-80],"id":"bb5d659a-d09a-483b-b87e-65841305a39a","name":"Cuando se llama como Tool"},{"parameters":{"jsCode":"const input = $input.item.json;\nconst periodo = input.periodo || 'Próximos 14 días';\nconst esModoPrueba = input.modoPrueba === true || String(input.modoPrueba).toLowerCase() === 'true' || input.modoPrueba === 1;\n\nlet payloadParaAPI = {};\nlet dataOriginalReal = null;\n\n// 1. Escenario Base Real\nif (input.inputModelo || input.contextoNegocioSerie || input.data) {\n  const dataArr = input.inputModelo || input.contextoNegocioSerie || input.data;\n  const arr = Array.isArray(dataArr) ? dataArr : [dataArr];\n  \n  // Guardamos la data original INTACTA para el siguiente nodo de análisis\n  dataOriginalReal = arr;\n  \n  // Limpiamos los datos, pero DEJAMOS PASAR los festivos\n  const datosLimpios = arr.map(dia => {\n    // Extraemos y descartamos clima, vacaciones y porcentajes. \n    // Como no sacamos \"es_festivo\" de aquí, viajará al modelo.\n    const {\n      es_vacaciones_escolares,\n      clima,\n      ajuste_pct,\n      motivo_ajuste,\n      ...datosParaModelo\n    } = dia;\n    \n    return datosParaModelo; // Enviamos esto a la API\n  });\n\n  payloadParaAPI = {\n    data: datosLimpios,\n    periodo\n  };\n}\n// 2. Modo Prueba (Simulación independiente)\nelse if (esModoPrueba) {\n  const hoy = new Date();\n  const filas = Array.from({ length: 14 }, (_, i) => {\n    const fecha = new Date(hoy);\n    fecha.setDate(fecha.getDate() + i + 1);\n    return {\n      CheckIn: fecha.toISOString().slice(0, 10),\n      dias_vista: i + 1,\n      ocupacion_actual: 0.50,\n      adr_actual: 90,\n      lead_time: i + 1,\n      Pais_España: 1,\n      pickup_7: 2,\n      pickup_14: 5,\n      ocupacion_anio_anterior: 0.45,\n      adr_anio_anterior: 85,\n      es_festivo: false // Añadido al modo prueba por si acaso\n    };\n  });\n  payloadParaAPI = { data: filas, periodo: 'Próximos 14 días (Modo Prueba)' };\n  dataOriginalReal = filas;\n}\nelse {\n  throw new Error(\"[ERROR CONFIG]: No se recibieron datos de entrada. Activa 'modoPrueba: true' para testear.\");\n}\n\nreturn [{\n  json: {\n    payloadParaAPI,\n    periodo,\n    dataOriginal: dataOriginalReal,\n    contextoNegocioSerie: input.contextoNegocioSerie,\n    competenciaResumen: input.competenciaResumen\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[-2816,-80],"id":"e78fc4c3-74cf-4bcd-8164-d5ad7a7f82b9","name":"Preparar Payload API"},{"parameters":{"method":"POST","url":"https://europe-west1-long-classifier-498316-k1.cloudfunctions.net/predecir-demanda","sendBody":true,"specifyBody":"json","jsonBody":"={{ $json.payloadParaAPI }}","options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.4,"position":[-2592,-80],"id":"654a5ba5-dd57-4927-a4a3-a7b86b29cbc2","name":"Llamar Predicción"},{"parameters":{"jsCode":"const datosPrevios = $('Preparar Payload API').item.json;\nconst respuesta = $input.item.json;\n\nconst resultadosLimpios = (respuesta.resultados || []).map(r => {\n  const ocupPred = r.ocup_final_predicha ?? 0;\n  const ocupAct = r.ocupacion_actual ?? 0;\n  const pickup = r.pickup_predicho ?? 0;\n  return {\n    Fecha: r.Fecha ?? null,\n    ocupacion_prevista: Number(ocupPred.toFixed(4)),\n    ocupacion_actual: Number(ocupAct.toFixed(4)),\n    pickup_previsto: Number(pickup.toFixed(4)),\n  };\n});\n\nreturn [{\n  json: {\n    periodo: datosPrevios.periodo,\n    resultados: resultadosLimpios,\n    dataOriginal: datosPrevios.dataOriginal,\n    contextoNegocioSerie: datosPrevios.contextoNegocioSerie,\n    competenciaResumen: datosPrevios.competenciaResumen\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[-2368,-80],"id":"15139f33-067e-43f2-83ba-675be1beaa61","name":"Empaquetar Resultado"}],"connections":{"Cuando se llama como Tool":{"main":[[{"node":"Preparar Payload API","type":"main","index":0}]]},"Preparar Payload API":{"main":[[{"node":"Llamar Predicción","type":"main","index":0}]]},"Llamar Predicción":{"main":[[{"node":"Empaquetar Resultado","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate","timeSavedMode":"fixed","callerPolicy":"workflowsFromSameOwner","availableInMCP":false},"staticData":{"node:Schedule Trigger":{"recurrenceRules":[]}},"meta":null,"nodeGroups":[],"pinData":{},"versionId":"1cc84790-42e4-46a0-a5d8-f7e75bb0d6b6","activeVersionId":"1cc84790-42e4-46a0-a5d8-f7e75bb0d6b6","versionCounter":190,"triggerCount":0,"tags":[],"shared":[{"updatedAt":"2026-07-14T08:46:13.914Z","createdAt":"2026-07-14T08:46:13.914Z","role":"workflow:owner","workflowId":"SMYVrZQScmSUZIKw","projectId":"vrzjQQtxE5ouFXJ5","project":{"updatedAt":"2026-07-10T10:04:26.046Z","createdAt":"2026-07-10T10:00:38.789Z","id":"vrzjQQtxE5ouFXJ5","name":"Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"da64a7fe-a167-4c9c-9637-bb8c1cf5a622"}}],"versionMetadata":{"name":"Version 1cc84790","description":""}}
+{
+  "updatedAt": "2026-10-07T13:30:10.612Z",
+  "createdAt": "2026-07-14T08:46:13.895Z",
+  "id": "SMYVrZQScmSUZIKw",
+  "name": "Subflow - Prediccion",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "periodo"
+            },
+            {
+              "name": "inputModelo",
+              "type": "array"
+            },
+            {
+              "name": "modoPrueba",
+              "type": "boolean"
+            },
+            {
+              "name": "contextoNegocioSerie",
+              "type": "array"
+            },
+            {
+              "name": "competenciaResumen",
+              "type": "object"
+            },
+            {
+              "name": "hotelConfig",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -3040,
+        -80
+      ],
+      "id": "bb5d659a-d09a-483b-b87e-65841305a39a",
+      "name": "Cuando se llama como Tool"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json || {};\nconst hotelConfig = input.hotelConfig;\n\nif (!hotelConfig) {\n  throw new Error(\"[VALIDACIÓN CRÍTICA]: Falta 'hotelConfig' en los datos de entrada recibidos por el subflujo.\");\n}\n\nconst capacidad = Number(hotelConfig.capacidad_total);\nif (!capacidad || isNaN(capacidad) || capacidad <= 0) {\n  throw new Error(\"[VALIDACIÓN CRÍTICA]: 'hotelConfig.capacidad_total' inválida o inexistente.\");\n}\n\nconst schema = hotelConfig.modelo_schema;\nif (!Array.isArray(schema) || schema.length === 0) {\n  throw new Error(\"[VALIDACIÓN CRÍTICA]: 'hotelConfig.modelo_schema' no contiene definiciones válidas.\");\n}\n\nconst serie = input.inputModelo || input.contextoNegocioSerie || input.serieDias || input.diario || input.dataOriginal;\nif (!Array.isArray(serie) || serie.length === 0) {\n  throw new Error(\"[VALIDACIÓN CRÍTICA]: No se recibió la serie de días para predecir.\");\n}\n\nfunction getProp(obj, path) {\n  return path.split('.').reduce((acc, part) => (acc !== null && acc !== undefined ? acc[part] : undefined), obj);\n}\n\nconst inputModelo = serie.map((dia, idx) => {\n  // 1. Resolver Fecha obligatoria\n  const fechaStr = dia.Fecha || dia.fecha || dia.CheckIn;\n  if (!fechaStr) {\n    throw new Error(`[VALIDACIÓN CRÍTICA]: El registro ${idx} no contiene 'Fecha'/'CheckIn'.`);\n  }\n\n  // 2. Resolver ocupacion_actual obligatoria\n  let ocupActual = dia.ocupacion_actual !== undefined ? Number(dia.ocupacion_actual) : undefined;\n  if (ocupActual === undefined || isNaN(ocupActual)) {\n    const habs = dia.habitaciones_ocupadas ?? dia.rooms_sold;\n    if (habs !== undefined && !isNaN(Number(habs))) {\n      ocupActual = Number(habs) / capacidad;\n    } else {\n      throw new Error(`[VALIDACIÓN CRÍTICA]: Falta 'ocupacion_actual' o 'habitaciones_ocupadas' en fecha ${fechaStr}.`);\n    }\n  }\n\n  // Objeto base con los campos que la Cloud Function audita al inicio\n  const fila = {\n    Fecha: String(fechaStr).slice(0, 10),\n    ocupacion_actual: Number(ocupActual)\n  };\n\n  // 3. Procesar resto de variables según modelo_schema\n  schema.forEach(def => {\n    if (def.variable_modelo === 'Fecha') return;\n\n    const rawVal = getProp(dia, def.origen_dato);\n\n    if (def.tipo === 'numeric') {\n      let num = Number(rawVal);\n      if (rawVal === undefined || rawVal === null || rawVal === '' || isNaN(num)) {\n        if (def.variable_modelo === 'ocupacion_actual') {\n          num = ocupActual;\n        } else if (def.valor_defecto !== undefined && def.valor_defecto !== '') {\n          num = Number(def.valor_defecto);\n        } else {\n          throw new Error(`[SCHEMA ERROR]: Variable numérica obligatoria '${def.variable_modelo}' no informada en ${fila.Fecha}.`);\n        }\n      }\n      fila[def.variable_modelo] = num;\n    } \n    else if (def.tipo.startsWith('one_hot:')) {\n      const categoriaEsperada = def.tipo.split(':')[1].trim().toLowerCase();\n      const valStr = String(rawVal || '').trim().toLowerCase();\n      fila[def.variable_modelo] = valStr.includes(categoriaEsperada) ? 1 : 0;\n    } \n    else {\n      throw new Error(`[SCHEMA ERROR]: Tipo desconocido '${def.tipo}' para variable '${def.variable_modelo}'.`);\n    }\n  });\n\n  return fila;\n});\n\nreturn [{\n  json: {\n    payloadParaAPI: {\n      data: inputModelo,\n      periodo: input.periodo || `Próximos ${hotelConfig.dias_vista_default} días`,\n      hotel_id: hotelConfig.hotel_id\n    },\n    modelo_endpoint: hotelConfig.modelo_endpoint,\n    periodo: input.periodo || `Próximos ${hotelConfig.dias_vista_default} días`,\n    hotelConfig,\n    dataOriginal: serie,\n    contextoNegocioSerie: input.contextoNegocioSerie || serie,\n    competenciaResumen: input.competenciaResumen || {}\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2816,
+        -80
+      ],
+      "id": "e78fc4c3-74cf-4bcd-8164-d5ad7a7f82b9",
+      "name": "Preparar Payload API"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.modelo_endpoint }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payloadParaAPI }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2592,
+        -80
+      ],
+      "id": "654a5ba5-dd57-4927-a4a3-a7b86b29cbc2",
+      "name": "Llamar Predicción"
+    },
+    {
+      "parameters": {
+        "jsCode": "const datosPrevios = $('Preparar Payload API').item.json;\nconst respuesta = $input.item.json;\nconst hotelConfig = datosPrevios.hotelConfig;\n\n// Validación estricta de la respuesta del modelo\nif (!respuesta) {\n  throw new Error(\"[VALIDACIÓN CRÍTICA]: La Cloud Function devolvió una respuesta vacía.\");\n}\n\nconst listaResultados = respuesta.resultados || respuesta.predicciones;\nif (!Array.isArray(listaResultados) || listaResultados.length === 0) {\n  throw new Error(`[VALIDACIÓN CRÍTICA]: La API no devolvió un array de resultados válido. Respuesta: ${JSON.stringify(respuesta)}`);\n}\n\nconst capacidad = Number(hotelConfig.capacidad_total);\nif (!capacidad || isNaN(capacidad) || capacidad <= 0) {\n  throw new Error(`[VALIDACIÓN CRÍTICA]: 'hotelConfig.capacidad_total' no válida (${hotelConfig.capacidad_total}).`);\n}\n\n// Mapeo sin fallbacks: si falta una métrica crítica, lanza error\nconst resultadosLimpios = listaResultados.map((r, idx) => {\n  const fecha = r.Fecha || r.fecha;\n  if (!fecha) {\n    throw new Error(`[VALIDACIÓN CRÍTICA]: El resultado en el índice ${idx} no contiene 'Fecha'.`);\n  }\n\n  // Comprobar presencia explícita de valores numéricos devueltos\n  const ocupAct = r.ocupacion_actual !== undefined ? Number(r.ocupacion_actual) : null;\n  const pickup = r.pickup_predicho !== undefined ? Number(r.pickup_predicho) : (r.pickup_previsto !== undefined ? Number(r.pickup_previsto) : null);\n  \n  if (pickup === null || isNaN(pickup)) {\n    throw new Error(`[VALIDACIÓN CRÍTICA]: 'pickup_predicho' no recibido o no numérico en fecha ${fecha}.`);\n  }\n\n  // Ocupación prevista: si viene directa o calculada según pickup proyectado\n  let ocupPred = r.ocup_final_predicha !== undefined ? Number(r.ocup_final_predicha) : (r.ocupacion_prevista !== undefined ? Number(r.ocupacion_prevista) : null);\n  \n  if (ocupPred === null || isNaN(ocupPred)) {\n    if (ocupAct !== null && !isNaN(ocupAct)) {\n      // Fórmula de negocio: Ocupación Actual + (Pickup Previsto / Capacidad Total * 100)\n      ocupPred = ocupAct + ((Math.max(0, pickup) / capacidad) * 100);\n    } else {\n      throw new Error(`[VALIDACIÓN CRÍTICA]: No se puede determinar la ocupación prevista para la fecha ${fecha}.`);\n    }\n  }\n\n  return {\n    Fecha: fecha,\n    ocupacion_prevista: Number(ocupPred.toFixed(4)),\n    ocupacion_actual: ocupAct !== null ? Number(ocupAct.toFixed(4)) : null,\n    pickup_previsto: Number(pickup.toFixed(4))\n  };\n});\n\nreturn [{\n  json: {\n    periodo: datosPrevios.periodo,\n    resultados: resultadosLimpios,\n    hotelConfig,\n    dataOriginal: datosPrevios.dataOriginal,\n    contextoNegocioSerie: datosPrevios.contextoNegocioSerie,\n    competenciaResumen: datosPrevios.competenciaResumen\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2368,
+        -80
+      ],
+      "id": "15139f33-067e-43f2-83ba-675be1beaa61",
+      "name": "Empaquetar Resultado"
+    }
+  ],
+  "connections": {
+    "Cuando se llama como Tool": {
+      "main": [
+        [
+          {
+            "node": "Preparar Payload API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Payload API": {
+      "main": [
+        [
+          {
+            "node": "Llamar Predicción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar Predicción": {
+      "main": [
+        [
+          {
+            "node": "Empaquetar Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {
+    "Cuando se llama como Tool": [
+      {
+        "json": {
+          "periodo": null,
+          "inputModelo": null,
+          "modoPrueba": null,
+          "contextoNegocioSerie": null,
+          "competenciaResumen": null,
+          "hotelConfig": null
+        }
+      }
+    ]
+  },
+  "versionId": "b0a958c5-95ba-47a9-91f6-a613f3542f05",
+  "activeVersionId": "b0a958c5-95ba-47a9-91f6-a613f3542f05",
+  "versionCounter": 216,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-07-14T08:46:13.914Z",
+      "createdAt": "2026-07-14T08:46:13.914Z",
+      "role": "workflow:owner",
+      "workflowId": "SMYVrZQScmSUZIKw",
+      "projectId": "vrzjQQtxE5ouFXJ5",
+      "project": {
+        "updatedAt": "2026-07-10T10:04:26.046Z",
+        "createdAt": "2026-07-10T10:00:38.789Z",
+        "id": "vrzjQQtxE5ouFXJ5",
+        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version b0a958c5",
+    "description": ""
+  }
+}

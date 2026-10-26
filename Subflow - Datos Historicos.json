@@ -1,1 +1,458 @@
-{"updatedAt":"2026-08-03T09:59:02.217Z","createdAt":"2026-07-28T09:09:07.815Z","id":"7ElRP6UQ9bHVsElH","name":"Subflow - Datos Historicos","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"workflowInputs":{"values":[{"name":"latitude","type":"number"},{"name":"longitude","type":"number"}]}},"type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1.1,"position":[-448,-48],"id":"d9bd9fb8-7795-4ef5-a70c-accbcfb50414","name":"Cuando se llama como Tool"},{"parameters":{"operation":"download","fileId":{"__rl":true,"value":"https://drive.google.com/file/d/1uNnP59x3eAcPDYeZEviOp984rPGn-oKm/view?usp=sharing","mode":"url"},"options":{}},"type":"n8n-nodes-base.googleDrive","typeVersion":3,"position":[-224,-48],"id":"1c09782e-8468-42f5-82fe-52cdab1c92d7","name":"Download file","credentials":{"googleDriveOAuth2Api":{"id":"bG4o0wjUYU9UwZ0H","name":"Google Drive account"}}},{"parameters":{"options":{}},"type":"n8n-nodes-base.extractFromFile","typeVersion":1.1,"position":[0,-48],"id":"80313c3e-69fa-4ea8-b1fe-1a0622b8e559","name":"Extract from File"},{"parameters":{"jsCode":"function parseDate(str) {\n  const d = new Date(str);\n  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));\n}\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\n\nconst registros = $('Extract from File').all();\nconst fechasCheckIn = registros\n  .map(item => item.json.CheckIn)\n  .filter(Boolean)\n  .map(parseDate);\n\nif (fechasCheckIn.length === 0) {\n  throw new Error(\"No se encontraron valores de CheckIn en la BBDD cargada.\");\n}\n\nconst fechaMin = new Date(Math.min(...fechasCheckIn));\nconst fechaMax = new Date(Math.max(...fechasCheckIn));\n\nreturn [{\n  json: {\n    start_date: toISODate(fechaMin),\n    end_date: toISODate(fechaMax),\n    total_reservas: registros.length\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[224,48],"id":"ed196419-7d5b-4d7b-bff8-9ead8418e241","name":"Obtener Fechas"},{"parameters":{"url":"https://archive-api.open-meteo.com/v1/archive","sendQuery":true,"queryParameters":{"parameters":[{"name":"latitude","value":"={{ $('Cuando se llama como Tool').item.json.latitude }}"},{"name":"longitude","value":"={{ $('Cuando se llama como Tool').item.json.longitude }}"},{"name":"start_date","value":"={{ $json.start_date }}"},{"name":"end_date","value":"={{ $json.end_date }}"},{"name":"daily","value":"temperature_2m_max,temperature_2m_min,precipitation_sum"},{"name":"timezone","value":"Europe/Madrid"}]},"options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.4,"position":[448,48],"id":"0dfd175e-44c4-4915-98e9-1c9a8097b1b3","name":"Obtener Clima Historico (1 llamada)"},{"parameters":{"jsCode":"const CAPACIDAD_HOTEL = 75;\nconst ESTADOS_VALIDOS = [\"Confirmada\", \"No Show\"];\n\nfunction parseDate(str) {\n  const d = new Date(str);\n  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));\n}\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction lunesDeLaSemana(date) {\n  const d = new Date(date);\n  const dia = (d.getUTCDay() + 6) % 7;\n  return addDays(d, -dia);\n}\n\nconst registros = $('Extract from File').all();\n\nconst reservas = registros\n  .map((item, index) => {\n    const f = item.json;\n    return {\n      id: index,\n      checkIn: parseDate(f.CheckIn),\n      checkOut: f.CheckOut ? parseDate(f.CheckOut) : null,\n      fechaReserva: parseDate(f.FechaReserva),\n      adr: Number(f.ADR) || 0,\n      estado: f.Estado\n    };\n  })\n  .filter(r => ESTADOS_VALIDOS.includes(r.estado));\n\nconst historico = {};\nreservas.forEach(r => {\n  if (!r.checkOut) return;\n  let actual = new Date(r.checkIn);\n  while (actual < r.checkOut) {\n    const key = toISODate(actual);\n    if (!historico[key]) historico[key] = { habitacionesSet: new Set(), adrSum: 0, count: 0 };\n    historico[key].habitacionesSet.add(r.id);\n    historico[key].adrSum += r.adr;\n    historico[key].count += 1;\n    actual = addDays(actual, 1);\n  }\n});\n\nconst semanas = {};\nObject.keys(historico).forEach(fechaKey => {\n  const fecha = parseDate(fechaKey);\n  const lunes = toISODate(lunesDeLaSemana(fecha));\n  if (!semanas[lunes]) semanas[lunes] = { dias: [] };\n  semanas[lunes].dias.push({ fecha: fechaKey, ...historico[fechaKey] });\n});\n\nfunction pickupSemana(lunesStr, dias) {\n  const lunes = parseDate(lunesStr);\n  const corte = addDays(lunes, -7);\n  const idsEnSemana = new Set();\n  reservas.forEach(r => {\n    if (!r.checkOut) return;\n    const solapa = r.checkIn < addDays(lunes, 7) && r.checkOut > lunes;\n    if (solapa && r.fechaReserva <= corte) idsEnSemana.add(r.id);\n  });\n  return idsEnSemana.size;\n}\n\nconst resultado = Object.entries(semanas).map(([lunes, data]) => {\n  const dias = data.dias;\n  const ocupaciones = dias.map(d => (d.habitacionesSet.size / CAPACIDAD_HOTEL) * 100);\n  const adrs = dias.map(d => d.count ? d.adrSum / d.count : 0);\n  const media = arr => arr.length ? arr.reduce((a,b)=>a+b,0) / arr.length : 0;\n\n  const ocupacion_media = Number(media(ocupaciones).toFixed(2));\n  const adr = Number(media(adrs).toFixed(2));\n  const revpar = Number(((ocupacion_media / 100) * adr).toFixed(2));\n\n  return {\n    json: {\n      fecha_inicio: lunes,\n      fecha_fin: toISODate(addDays(parseDate(lunes), 6)),\n      ocupacion_media,\n      adr,\n      revpar,\n      pickup_7: pickupSemana(lunes, dias),\n      dias_con_datos: dias.length\n    }\n  };\n});\n\nreturn resultado;"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[672,48],"id":"78ff8db3-f114-43be-abcc-c1fd7086768e","name":"Generacion BBDD Semanal"},{"parameters":{"jsCode":"function toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\n\nconst VACACIONES_ESCOLARES_GALICIA = [\n  { inicio: \"2022-12-23\", fin: \"2023-01-06\" },\n  { inicio: \"2023-02-20\", fin: \"2023-02-22\" },\n  { inicio: \"2023-04-03\", fin: \"2023-04-10\" },\n  { inicio: \"2023-06-22\", fin: \"2023-09-10\" },\n  { inicio: \"2023-12-22\", fin: \"2024-01-07\" },\n  { inicio: \"2024-02-12\", fin: \"2024-02-14\" },\n  { inicio: \"2024-03-25\", fin: \"2024-04-01\" },\n  { inicio: \"2024-06-21\", fin: \"2024-09-11\" },\n  { inicio: \"2024-12-23\", fin: \"2025-01-07\" },\n  { inicio: \"2025-03-03\", fin: \"2025-03-05\" },\n  { inicio: \"2025-04-14\", fin: \"2025-04-21\" },\n  { inicio: \"2025-06-20\", fin: \"2025-09-11\" },\n  { inicio: \"2025-12-22\", fin: \"2026-01-07\" },\n  { inicio: \"2026-02-27\", fin: \"2026-03-03\" },\n  { inicio: \"2026-03-30\", fin: \"2026-04-06\" },\n  { inicio: \"2026-06-23\", fin: \"2026-09-09\" }\n];\n\nconst FESTIVOS_POR_ANIO = {\n  2023: [\"2023-01-01\",\"2023-01-06\",\"2023-04-06\",\"2023-04-07\",\"2023-05-01\",\"2023-05-17\",\"2023-07-25\",\"2023-08-15\",\"2023-10-12\",\"2023-11-01\",\"2023-12-06\",\"2023-12-08\",\"2023-12-25\"],\n  2024: [\"2024-01-01\",\"2024-01-06\",\"2024-03-28\",\"2024-03-29\",\"2024-05-01\",\"2024-07-25\",\"2024-08-15\",\"2024-10-12\",\"2024-11-01\",\"2024-12-06\",\"2024-12-08\",\"2024-12-25\"],\n  2025: [\"2025-01-01\",\"2025-01-06\",\"2025-04-17\",\"2025-04-18\",\"2025-05-01\",\"2025-07-25\",\"2025-08-15\",\"2025-10-12\",\"2025-11-01\",\"2025-12-06\",\"2025-12-08\",\"2025-12-25\"]\n};\n\nfunction esVacacionesEscolares(fechaISO) {\n  return VACACIONES_ESCOLARES_GALICIA.some(p => fechaISO >= p.inicio && fechaISO <= p.fin);\n}\nfunction esFestivo(fechaISO) {\n  const anio = Number(fechaISO.slice(0, 4));\n  return (FESTIVOS_POR_ANIO[anio] || []).includes(fechaISO);\n}\n\nreturn items.map(item => {\n  const { fecha_inicio, fecha_fin } = item.json;\n  const dias = [];\n  let cursor = new Date(fecha_inicio);\n  const fin = new Date(fecha_fin);\n  while (cursor <= fin) {\n    dias.push(toISODate(cursor));\n    cursor = addDays(cursor, 1);\n  }\n\n  const dias_vacaciones = dias.filter(esVacacionesEscolares).length;\n  const dias_festivos = dias.filter(esFestivo).length;\n\n  return {\n    json: {\n      ...item.json,\n      dias_vacaciones_escolares: dias_vacaciones,\n      dias_festivos: dias_festivos,\n      pct_dias_vacaciones: Number((dias_vacaciones / dias.length).toFixed(2)),\n      pct_dias_festivos: Number((dias_festivos / dias.length).toFixed(2))\n    }\n  };\n});"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[896,48],"id":"0c2e83e0-5b22-4779-b081-31e2a9d6362f","name":"Calendario Historico"},{"parameters":{"jsCode":"const climaData = $('Obtener Clima Historico (1 llamada)').first().json.daily;\nconst climaPorFecha = {};\n\nif (climaData && climaData.time) {\n  climaData.time.forEach((fecha, i) => {\n    climaPorFecha[fecha] = {\n      temp_max: climaData.temperature_2m_max?.[i] ?? null,\n      temp_min: climaData.temperature_2m_min?.[i] ?? null,\n      precipitacion: climaData.precipitation_sum?.[i] ?? null\n    };\n  });\n}\n\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\n\nreturn items.map(item => {\n  const { fecha_inicio, fecha_fin } = item.json;\n  const dias = [];\n  let cursor = new Date(fecha_inicio);\n  const fin = new Date(fecha_fin);\n  while (cursor <= fin) {\n    dias.push(toISODate(cursor));\n    cursor = addDays(cursor, 1);\n  }\n\n  const registrosClima = dias.map(f => climaPorFecha[f]).filter(Boolean);\n  const diasConLluvia = registrosClima.filter(c => c.precipitacion !== null && c.precipitacion >= 1).length;\n  const diasBuenTiempo = registrosClima.filter(c => c.precipitacion !== null && c.precipitacion < 1 && c.temp_max > 20).length;\n\n  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;\n  const tempMaxMedia = media(registrosClima.map(c => c.temp_max).filter(v => v !== null));\n  const precipTotal = registrosClima.reduce((s, c) => s + (c.precipitacion ?? 0), 0);\n\n  return {\n    json: {\n      ...item.json,\n      dias_con_datos_clima: registrosClima.length,\n      pct_dias_lluvia: registrosClima.length ? Number((diasConLluvia / registrosClima.length).toFixed(2)) : null,\n      pct_dias_buen_tiempo: registrosClima.length ? Number((diasBuenTiempo / registrosClima.length).toFixed(2)) : null,\n      temp_max_media: tempMaxMedia !== null ? Number(tempMaxMedia.toFixed(1)) : null,\n      precipitacion_total_mm: Number(precipTotal.toFixed(1))\n    }\n  };\n});"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[1120,48],"id":"3167fb29-7d96-4851-99d5-ff19474c20c3","name":"Preparar Clima Historico"},{"parameters":{"tableId":"historico_periodos","fieldsUi":{"fieldValues":[{"fieldId":"fecha_inicio","fieldValue":"={{ $json.fecha_inicio }}"},{"fieldId":"fecha_fin","fieldValue":"={{ $json.fecha_fin }}"},{"fieldId":"ocupacion_media","fieldValue":"={{ $json.ocupacion_media }}"},{"fieldId":"adr","fieldValue":"={{ $json.adr }}"},{"fieldId":"revpar","fieldValue":"={{ $json.revpar }}"},{"fieldId":"pickup_7","fieldValue":"={{ $json.pickup_7 }}"},{"fieldId":"dias_con_datos","fieldValue":"={{ $json.dias_con_datos }}"},{"fieldId":"dias_vacaciones_escolares","fieldValue":"={{ $json.dias_vacaciones_escolares }}"},{"fieldId":"dias_festivos","fieldValue":"={{ $json.dias_festivos }}"},{"fieldId":"pct_dias_vacaciones","fieldValue":"={{ $json.pct_dias_vacaciones }}"},{"fieldId":"pct_dias_festivos","fieldValue":"={{ $json.pct_dias_festivos }}"},{"fieldId":"pct_dias_lluvia","fieldValue":"={{ $json.pct_dias_lluvia }}"},{"fieldId":"pct_dias_buen_tiempo","fieldValue":"={{ $json.pct_dias_buen_tiempo }}"},{"fieldId":"precipitacion_total_mm","fieldValue":"={{ $json.precipitacion_total_mm }}"},{"fieldId":"temp_max_media","fieldValue":"={{ $json.temp_max_media }}"},{"fieldId":"metricas_json"}]}},"type":"n8n-nodes-base.supabase","typeVersion":1,"position":[1344,48],"id":"6ac83595-757d-41dc-bad2-14305bf6e633","name":"Insertar en Supabase","credentials":{"supabaseApi":{"id":"LKJapXV59ZyaS2vS","name":"Supabase account"}}},{"parameters":{"jsCode":"return [{ json: {} }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[224,-144],"id":"97aead54-71ca-4c4b-92cf-492a7ad43cad","name":"Preparar Un Solo Trigger"},{"parameters":{"method":"DELETE","url":"https://eunaqtlwzzfqhodhyubt.supabase.co/rest/v1/historico_periodos?id=gt.0","sendHeaders":true,"headerParameters":{"parameters":[{"name":"apikey","value":"sb_publishable_CVYYvs0yxLTvowGoG1U4Ug_ypWVMFyF"},{"name":"Authorization","value":"sb_secret_N9xsIv5Xywf8FnU8xbcOMg_DiF0CuVZ"},{"name":"Prefer","value":"return=minimal"}]},"options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[448,-144],"id":"8c965634-c3c7-4e29-be5c-6d9f3a490582","name":"Vaciar Historico"}],"connections":{"Cuando se llama como Tool":{"main":[[{"node":"Download file","type":"main","index":0}]]},"Download file":{"main":[[{"node":"Extract from File","type":"main","index":0}]]},"Extract from File":{"main":[[{"node":"Preparar Un Solo Trigger","type":"main","index":0},{"node":"Obtener Fechas","type":"main","index":0}]]},"Obtener Fechas":{"main":[[{"node":"Obtener Clima Historico (1 llamada)","type":"main","index":0}]]},"Obtener Clima Historico (1 llamada)":{"main":[[{"node":"Generacion BBDD Semanal","type":"main","index":0}]]},"Generacion BBDD Semanal":{"main":[[{"node":"Calendario Historico","type":"main","index":0}]]},"Calendario Historico":{"main":[[{"node":"Preparar Clima Historico","type":"main","index":0}]]},"Preparar Clima Historico":{"main":[[{"node":"Insertar en Supabase","type":"main","index":0}]]},"Preparar Un Solo Trigger":{"main":[[{"node":"Vaciar Historico","type":"main","index":0}]]},"Vaciar Historico":{"main":[[]]}},"settings":{"executionOrder":"v1","binaryMode":"separate","availableInMCP":false},"staticData":null,"meta":{"templateCredsSetupCompleted":true},"nodeGroups":[],"pinData":{"Cuando se llama como Tool":[{"json":{"latitude":42.1197,"longitude":-8.8489}}]},"versionId":"9b79ebca-d4e2-4c3c-82d1-bedc0c1de66b","activeVersionId":"2fb34990-7484-4063-b952-1e4a63aabfde","versionCounter":232,"triggerCount":0,"tags":[],"shared":[{"updatedAt":"2026-07-28T09:09:07.879Z","createdAt":"2026-07-28T09:09:07.879Z","role":"workflow:owner","workflowId":"7ElRP6UQ9bHVsElH","projectId":"vrzjQQtxE5ouFXJ5","project":{"updatedAt":"2026-07-10T10:04:26.046Z","createdAt":"2026-07-10T10:00:38.789Z","id":"vrzjQQtxE5ouFXJ5","name":"Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"da64a7fe-a167-4c9c-9637-bb8c1cf5a622"}}],"versionMetadata":{"name":null,"description":null}}
+{
+  "updatedAt": "2026-08-03T09:59:02.217Z",
+  "createdAt": "2026-07-28T09:09:07.815Z",
+  "id": "7ElRP6UQ9bHVsElH",
+  "name": "Subflow - Datos Historicos",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "latitude",
+              "type": "number"
+            },
+            {
+              "name": "longitude",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -448,
+        -48
+      ],
+      "id": "d9bd9fb8-7795-4ef5-a70c-accbcfb50414",
+      "name": "Cuando se llama como Tool"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "https://drive.google.com/file/d/1uNnP59x3eAcPDYeZEviOp984rPGn-oKm/view?usp=sharing",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        -48
+      ],
+      "id": "1c09782e-8468-42f5-82fe-52cdab1c92d7",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bG4o0wjUYU9UwZ0H",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        -48
+      ],
+      "id": "80313c3e-69fa-4ea8-b1fe-1a0622b8e559",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseDate(str) {\n  const d = new Date(str);\n  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));\n}\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\n\nconst registros = $('Extract from File').all();\nconst fechasCheckIn = registros\n  .map(item => item.json.CheckIn)\n  .filter(Boolean)\n  .map(parseDate);\n\nif (fechasCheckIn.length === 0) {\n  throw new Error(\"No se encontraron valores de CheckIn en la BBDD cargada.\");\n}\n\nconst fechaMin = new Date(Math.min(...fechasCheckIn));\nconst fechaMax = new Date(Math.max(...fechasCheckIn));\n\nreturn [{\n  json: {\n    start_date: toISODate(fechaMin),\n    end_date: toISODate(fechaMax),\n    total_reservas: registros.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        48
+      ],
+      "id": "ed196419-7d5b-4d7b-bff8-9ead8418e241",
+      "name": "Obtener Fechas"
+    },
+    {
+      "parameters": {
+        "url": "https://archive-api.open-meteo.com/v1/archive",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "={{ $('Cuando se llama como Tool').item.json.latitude }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ $('Cuando se llama como Tool').item.json.longitude }}"
+            },
+            {
+              "name": "start_date",
+              "value": "={{ $json.start_date }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $json.end_date }}"
+            },
+            {
+              "name": "daily",
+              "value": "temperature_2m_max,temperature_2m_min,precipitation_sum"
+            },
+            {
+              "name": "timezone",
+              "value": "Europe/Madrid"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        48
+      ],
+      "id": "0dfd175e-44c4-4915-98e9-1c9a8097b1b3",
+      "name": "Obtener Clima Historico (1 llamada)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const CAPACIDAD_HOTEL = 75;\nconst ESTADOS_VALIDOS = [\"Confirmada\", \"No Show\"];\n\nfunction parseDate(str) {\n  const d = new Date(str);\n  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));\n}\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction lunesDeLaSemana(date) {\n  const d = new Date(date);\n  const dia = (d.getUTCDay() + 6) % 7;\n  return addDays(d, -dia);\n}\n\nconst registros = $('Extract from File').all();\n\nconst reservas = registros\n  .map((item, index) => {\n    const f = item.json;\n    return {\n      id: index,\n      checkIn: parseDate(f.CheckIn),\n      checkOut: f.CheckOut ? parseDate(f.CheckOut) : null,\n      fechaReserva: parseDate(f.FechaReserva),\n      adr: Number(f.ADR) || 0,\n      estado: f.Estado\n    };\n  })\n  .filter(r => ESTADOS_VALIDOS.includes(r.estado));\n\nconst historico = {};\nreservas.forEach(r => {\n  if (!r.checkOut) return;\n  let actual = new Date(r.checkIn);\n  while (actual < r.checkOut) {\n    const key = toISODate(actual);\n    if (!historico[key]) historico[key] = { habitacionesSet: new Set(), adrSum: 0, count: 0 };\n    historico[key].habitacionesSet.add(r.id);\n    historico[key].adrSum += r.adr;\n    historico[key].count += 1;\n    actual = addDays(actual, 1);\n  }\n});\n\nconst semanas = {};\nObject.keys(historico).forEach(fechaKey => {\n  const fecha = parseDate(fechaKey);\n  const lunes = toISODate(lunesDeLaSemana(fecha));\n  if (!semanas[lunes]) semanas[lunes] = { dias: [] };\n  semanas[lunes].dias.push({ fecha: fechaKey, ...historico[fechaKey] });\n});\n\nfunction pickupSemana(lunesStr, dias) {\n  const lunes = parseDate(lunesStr);\n  const corte = addDays(lunes, -7);\n  const idsEnSemana = new Set();\n  reservas.forEach(r => {\n    if (!r.checkOut) return;\n    const solapa = r.checkIn < addDays(lunes, 7) && r.checkOut > lunes;\n    if (solapa && r.fechaReserva <= corte) idsEnSemana.add(r.id);\n  });\n  return idsEnSemana.size;\n}\n\nconst resultado = Object.entries(semanas).map(([lunes, data]) => {\n  const dias = data.dias;\n  const ocupaciones = dias.map(d => (d.habitacionesSet.size / CAPACIDAD_HOTEL) * 100);\n  const adrs = dias.map(d => d.count ? d.adrSum / d.count : 0);\n  const media = arr => arr.length ? arr.reduce((a,b)=>a+b,0) / arr.length : 0;\n\n  const ocupacion_media = Number(media(ocupaciones).toFixed(2));\n  const adr = Number(media(adrs).toFixed(2));\n  const revpar = Number(((ocupacion_media / 100) * adr).toFixed(2));\n\n  return {\n    json: {\n      fecha_inicio: lunes,\n      fecha_fin: toISODate(addDays(parseDate(lunes), 6)),\n      ocupacion_media,\n      adr,\n      revpar,\n      pickup_7: pickupSemana(lunes, dias),\n      dias_con_datos: dias.length\n    }\n  };\n});\n\nreturn resultado;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        48
+      ],
+      "id": "78ff8db3-f114-43be-abcc-c1fd7086768e",
+      "name": "Generacion BBDD Semanal"
+    },
+    {
+      "parameters": {
+        "jsCode": "function toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\n\nconst VACACIONES_ESCOLARES_GALICIA = [\n  { inicio: \"2022-12-23\", fin: \"2023-01-06\" },\n  { inicio: \"2023-02-20\", fin: \"2023-02-22\" },\n  { inicio: \"2023-04-03\", fin: \"2023-04-10\" },\n  { inicio: \"2023-06-22\", fin: \"2023-09-10\" },\n  { inicio: \"2023-12-22\", fin: \"2024-01-07\" },\n  { inicio: \"2024-02-12\", fin: \"2024-02-14\" },\n  { inicio: \"2024-03-25\", fin: \"2024-04-01\" },\n  { inicio: \"2024-06-21\", fin: \"2024-09-11\" },\n  { inicio: \"2024-12-23\", fin: \"2025-01-07\" },\n  { inicio: \"2025-03-03\", fin: \"2025-03-05\" },\n  { inicio: \"2025-04-14\", fin: \"2025-04-21\" },\n  { inicio: \"2025-06-20\", fin: \"2025-09-11\" },\n  { inicio: \"2025-12-22\", fin: \"2026-01-07\" },\n  { inicio: \"2026-02-27\", fin: \"2026-03-03\" },\n  { inicio: \"2026-03-30\", fin: \"2026-04-06\" },\n  { inicio: \"2026-06-23\", fin: \"2026-09-09\" }\n];\n\nconst FESTIVOS_POR_ANIO = {\n  2023: [\"2023-01-01\",\"2023-01-06\",\"2023-04-06\",\"2023-04-07\",\"2023-05-01\",\"2023-05-17\",\"2023-07-25\",\"2023-08-15\",\"2023-10-12\",\"2023-11-01\",\"2023-12-06\",\"2023-12-08\",\"2023-12-25\"],\n  2024: [\"2024-01-01\",\"2024-01-06\",\"2024-03-28\",\"2024-03-29\",\"2024-05-01\",\"2024-07-25\",\"2024-08-15\",\"2024-10-12\",\"2024-11-01\",\"2024-12-06\",\"2024-12-08\",\"2024-12-25\"],\n  2025: [\"2025-01-01\",\"2025-01-06\",\"2025-04-17\",\"2025-04-18\",\"2025-05-01\",\"2025-07-25\",\"2025-08-15\",\"2025-10-12\",\"2025-11-01\",\"2025-12-06\",\"2025-12-08\",\"2025-12-25\"]\n};\n\nfunction esVacacionesEscolares(fechaISO) {\n  return VACACIONES_ESCOLARES_GALICIA.some(p => fechaISO >= p.inicio && fechaISO <= p.fin);\n}\nfunction esFestivo(fechaISO) {\n  const anio = Number(fechaISO.slice(0, 4));\n  return (FESTIVOS_POR_ANIO[anio] || []).includes(fechaISO);\n}\n\nreturn items.map(item => {\n  const { fecha_inicio, fecha_fin } = item.json;\n  const dias = [];\n  let cursor = new Date(fecha_inicio);\n  const fin = new Date(fecha_fin);\n  while (cursor <= fin) {\n    dias.push(toISODate(cursor));\n    cursor = addDays(cursor, 1);\n  }\n\n  const dias_vacaciones = dias.filter(esVacacionesEscolares).length;\n  const dias_festivos = dias.filter(esFestivo).length;\n\n  return {\n    json: {\n      ...item.json,\n      dias_vacaciones_escolares: dias_vacaciones,\n      dias_festivos: dias_festivos,\n      pct_dias_vacaciones: Number((dias_vacaciones / dias.length).toFixed(2)),\n      pct_dias_festivos: Number((dias_festivos / dias.length).toFixed(2))\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        48
+      ],
+      "id": "0c2e83e0-5b22-4779-b081-31e2a9d6362f",
+      "name": "Calendario Historico"
+    },
+    {
+      "parameters": {
+        "jsCode": "const climaData = $('Obtener Clima Historico (1 llamada)').first().json.daily;\nconst climaPorFecha = {};\n\nif (climaData && climaData.time) {\n  climaData.time.forEach((fecha, i) => {\n    climaPorFecha[fecha] = {\n      temp_max: climaData.temperature_2m_max?.[i] ?? null,\n      temp_min: climaData.temperature_2m_min?.[i] ?? null,\n      precipitacion: climaData.precipitation_sum?.[i] ?? null\n    };\n  });\n}\n\nfunction toISODate(date) { return date.toISOString().slice(0, 10); }\nfunction addDays(date, n) {\n  const d = new Date(date);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d;\n}\n\nreturn items.map(item => {\n  const { fecha_inicio, fecha_fin } = item.json;\n  const dias = [];\n  let cursor = new Date(fecha_inicio);\n  const fin = new Date(fecha_fin);\n  while (cursor <= fin) {\n    dias.push(toISODate(cursor));\n    cursor = addDays(cursor, 1);\n  }\n\n  const registrosClima = dias.map(f => climaPorFecha[f]).filter(Boolean);\n  const diasConLluvia = registrosClima.filter(c => c.precipitacion !== null && c.precipitacion >= 1).length;\n  const diasBuenTiempo = registrosClima.filter(c => c.precipitacion !== null && c.precipitacion < 1 && c.temp_max > 20).length;\n\n  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;\n  const tempMaxMedia = media(registrosClima.map(c => c.temp_max).filter(v => v !== null));\n  const precipTotal = registrosClima.reduce((s, c) => s + (c.precipitacion ?? 0), 0);\n\n  return {\n    json: {\n      ...item.json,\n      dias_con_datos_clima: registrosClima.length,\n      pct_dias_lluvia: registrosClima.length ? Number((diasConLluvia / registrosClima.length).toFixed(2)) : null,\n      pct_dias_buen_tiempo: registrosClima.length ? Number((diasBuenTiempo / registrosClima.length).toFixed(2)) : null,\n      temp_max_media: tempMaxMedia !== null ? Number(tempMaxMedia.toFixed(1)) : null,\n      precipitacion_total_mm: Number(precipTotal.toFixed(1))\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        48
+      ],
+      "id": "3167fb29-7d96-4851-99d5-ff19474c20c3",
+      "name": "Preparar Clima Historico"
+    },
+    {
+      "parameters": {
+        "tableId": "historico_periodos",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "fecha_inicio",
+              "fieldValue": "={{ $json.fecha_inicio }}"
+            },
+            {
+              "fieldId": "fecha_fin",
+              "fieldValue": "={{ $json.fecha_fin }}"
+            },
+            {
+              "fieldId": "ocupacion_media",
+              "fieldValue": "={{ $json.ocupacion_media }}"
+            },
+            {
+              "fieldId": "adr",
+              "fieldValue": "={{ $json.adr }}"
+            },
+            {
+              "fieldId": "revpar",
+              "fieldValue": "={{ $json.revpar }}"
+            },
+            {
+              "fieldId": "pickup_7",
+              "fieldValue": "={{ $json.pickup_7 }}"
+            },
+            {
+              "fieldId": "dias_con_datos",
+              "fieldValue": "={{ $json.dias_con_datos }}"
+            },
+            {
+              "fieldId": "dias_vacaciones_escolares",
+              "fieldValue": "={{ $json.dias_vacaciones_escolares }}"
+            },
+            {
+              "fieldId": "dias_festivos",
+              "fieldValue": "={{ $json.dias_festivos }}"
+            },
+            {
+              "fieldId": "pct_dias_vacaciones",
+              "fieldValue": "={{ $json.pct_dias_vacaciones }}"
+            },
+            {
+              "fieldId": "pct_dias_festivos",
+              "fieldValue": "={{ $json.pct_dias_festivos }}"
+            },
+            {
+              "fieldId": "pct_dias_lluvia",
+              "fieldValue": "={{ $json.pct_dias_lluvia }}"
+            },
+            {
+              "fieldId": "pct_dias_buen_tiempo",
+              "fieldValue": "={{ $json.pct_dias_buen_tiempo }}"
+            },
+            {
+              "fieldId": "precipitacion_total_mm",
+              "fieldValue": "={{ $json.precipitacion_total_mm }}"
+            },
+            {
+              "fieldId": "temp_max_media",
+              "fieldValue": "={{ $json.temp_max_media }}"
+            },
+            {
+              "fieldId": "metricas_json"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        48
+      ],
+      "id": "6ac83595-757d-41dc-bad2-14305bf6e633",
+      "name": "Insertar en Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "LKJapXV59ZyaS2vS",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -144
+      ],
+      "id": "97aead54-71ca-4c4b-92cf-492a7ad43cad",
+      "name": "Preparar Un Solo Trigger"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "https://eunaqtlwzzfqhodhyubt.supabase.co/rest/v1/historico_periodos?id=gt.0",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sb_publishable_CVYYvs0yxLTvowGoG1U4Ug_ypWVMFyF"
+            },
+            {
+              "name": "Authorization",
+              "value": "sb_secret_N9xsIv5Xywf8FnU8xbcOMg_DiF0CuVZ"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        -144
+      ],
+      "id": "8c965634-c3c7-4e29-be5c-6d9f3a490582",
+      "name": "Vaciar Historico"
+    }
+  ],
+  "connections": {
+    "Cuando se llama como Tool": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Preparar Un Solo Trigger",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Obtener Fechas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Fechas": {
+      "main": [
+        [
+          {
+            "node": "Obtener Clima Historico (1 llamada)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Clima Historico (1 llamada)": {
+      "main": [
+        [
+          {
+            "node": "Generacion BBDD Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generacion BBDD Semanal": {
+      "main": [
+        [
+          {
+            "node": "Calendario Historico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendario Historico": {
+      "main": [
+        [
+          {
+            "node": "Preparar Clima Historico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Clima Historico": {
+      "main": [
+        [
+          {
+            "node": "Insertar en Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Un Solo Trigger": {
+      "main": [
+        [
+          {
+            "node": "Vaciar Historico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vaciar Historico": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {
+    "Cuando se llama como Tool": [
+      {
+        "json": {
+          "latitude": 42.1197,
+          "longitude": -8.8489
+        }
+      }
+    ]
+  },
+  "versionId": "9b79ebca-d4e2-4c3c-82d1-bedc0c1de66b",
+  "activeVersionId": "2fb34990-7484-4063-b952-1e4a63aabfde",
+  "versionCounter": 232,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-07-28T09:09:07.879Z",
+      "createdAt": "2026-07-28T09:09:07.879Z",
+      "role": "workflow:owner",
+      "workflowId": "7ElRP6UQ9bHVsElH",
+      "projectId": "vrzjQQtxE5ouFXJ5",
+      "project": {
+        "updatedAt": "2026-07-10T10:04:26.046Z",
+        "createdAt": "2026-07-10T10:00:38.789Z",
+        "id": "vrzjQQtxE5ouFXJ5",
+        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}
