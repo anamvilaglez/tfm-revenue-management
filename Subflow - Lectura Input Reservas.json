@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-10-19T20:10:27.395Z",
-  "createdAt": "2026-07-20T08:32:30.310Z",
-  "id": "IeCl7HkRGgDQdDoi",
   "name": "Subflow - Lectura Input Reservas",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -107,77 +101,6 @@
     },
     {
       "parameters": {
-        "operation": "download",
-        "fileId": {
-          "__rl": true,
-          "value": "={{ $('Search files and folders').item.json.id }}",
-          "mode": "id"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [
-        -4368,
-        -160
-      ],
-      "id": "ee4c6f5a-6e3e-4715-a39c-ba9815b9b71e",
-      "name": "Download file",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "bG4o0wjUYU9UwZ0H",
-          "name": "Google Drive account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "9c9da87a-e488-478e-890d-b72ee149357d",
-              "leftValue": "={{ $input.all().length }}",
-              "rightValue": 1,
-              "operator": {
-                "type": "number",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        -4592,
-        -64
-      ],
-      "id": "d94827da-2028-48da-b00f-7830a7a74468",
-      "name": "If"
-    },
-    {
-      "parameters": {
-        "errorMessage": "=No se ha encontrado el archivo BBDD_Hotel_Reservas para la fecha: {{ $('Start').first().json.fecha_inicio || $now.toFormat('yyyy-MM-dd') }}"
-      },
-      "type": "n8n-nodes-base.stopAndError",
-      "typeVersion": 1,
-      "position": [
-        -4368,
-        32
-      ],
-      "id": "406f0804-9d63-46ec-b911-774d308ca639",
-      "name": "Stop and Error"
-    },
-    {
-      "parameters": {
         "resource": "fileFolder",
         "searchMethod": "query",
         "queryString": "=name contains 'BBDD_Hotel_Reservas_' and name contains '{{ DateTime.fromISO($('Start').first().json.fecha_inicio || $now).toFormat('ddMMyy') }}.csv' and trashed = false",
@@ -194,6 +117,7 @@
       ],
       "id": "5f35d892-8a28-492e-af8d-94d877055e32",
       "name": "Search files and folders",
+      "alwaysOutputData": true,
       "credentials": {
         "googleDriveOAuth2Api": {
           "id": "bG4o0wjUYU9UwZ0H",
@@ -239,14 +163,87 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        -3952,
-        -80
+        -3920,
+        -160
       ],
       "id": "14409f19-bd8e-442b-9714-e13df274ab92",
       "name": "Traer Historico Diario",
       "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -4368,
+        -160
+      ],
+      "id": "434c185e-79c4-4fc4-9873-a1f5c5365997",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bG4o0wjUYU9UwZ0H",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9c9da87a-e488-478e-890d-b72ee149357d",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4592,
+        -64
+      ],
+      "id": "35adb5b3-70d6-494c-8065-748e2d61a05c",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "errorMessage": "=No se ha encontrado el archivo BBDD_Hotel_Reservas para la fecha: {{ $('Start').first().json.fecha_inicio || $now.toFormat('yyyy-MM-dd') }}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -4368,
+        32
+      ],
+      "id": "8bfe075a-d9c7-4868-a8af-650a03003386",
+      "name": "Stop and Error"
     }
   ],
+  "pinData": {},
   "connections": {
     "Start": {
       "main": [
@@ -292,11 +289,22 @@
         ]
       ]
     },
-    "Download file": {
+    "Search files and folders": {
       "main": [
         [
           {
-            "node": "Extract from File",
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traer Historico Diario": {
+      "main": [
+        [
+          {
+            "node": "Transformacion BBDD",
             "type": "main",
             "index": 0
           }
@@ -321,22 +329,11 @@
         ]
       ]
     },
-    "Search files and folders": {
+    "Download file": {
       "main": [
         [
           {
-            "node": "If",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Traer Historico Diario": {
-      "main": [
-        [
-          {
-            "node": "Transformacion BBDD",
+            "node": "Extract from File",
             "type": "main",
             "index": 0
           }
@@ -344,41 +341,20 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "availableInMCP": false,
-    "binaryMode": "separate"
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "DmDkwn1BYxqupOyd",
+    "callerPolicy": "workflowsFromSameOwner"
   },
-  "staticData": null,
-  "meta": null,
+  "versionId": "69f82da4-6e64-463b-b2a6-63d171ba025f",
+  "meta": {
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
+  },
   "nodeGroups": [],
-  "pinData": {},
-  "versionId": "cd7e2590-de26-4754-aac8-d1d030940c6d",
-  "activeVersionId": "cd7e2590-de26-4754-aac8-d1d030940c6d",
-  "versionCounter": 174,
-  "triggerCount": 0,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-07-20T08:32:30.323Z",
-      "createdAt": "2026-07-20T08:32:30.323Z",
-      "role": "workflow:owner",
-      "workflowId": "IeCl7HkRGgDQdDoi",
-      "projectId": "vrzjQQtxE5ouFXJ5",
-      "project": {
-        "updatedAt": "2026-07-10T10:04:26.046Z",
-        "createdAt": "2026-07-10T10:00:38.789Z",
-        "id": "vrzjQQtxE5ouFXJ5",
-        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "Version cd7e2590",
-    "description": ""
-  }
+  "id": "IeCl7HkRGgDQdDoi",
+  "tags": []
 }

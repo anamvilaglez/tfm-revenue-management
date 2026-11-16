@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-08-03T09:59:02.217Z",
-  "createdAt": "2026-07-28T09:09:07.815Z",
-  "id": "7ElRP6UQ9bHVsElH",
   "name": "Subflow - Datos Historicos",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -266,17 +260,17 @@
     {
       "parameters": {
         "method": "DELETE",
-        "url": "https://eunaqtlwzzfqhodhyubt.supabase.co/rest/v1/historico_periodos?id=gt.0",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/historico_periodos?id=gt.0",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "apikey",
-              "value": "sb_publishable_CVYYvs0yxLTvowGoG1U4Ug_ypWVMFyF"
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
             },
             {
               "name": "Authorization",
-              "value": "sb_secret_N9xsIv5Xywf8FnU8xbcOMg_DiF0CuVZ"
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
             },
             {
               "name": "Prefer",
@@ -296,6 +290,16 @@
       "name": "Vaciar Historico"
     }
   ],
+  "pinData": {
+    "Cuando se llama como Tool": [
+      {
+        "json": {
+          "latitude": 42.1197,
+          "longitude": -8.8489
+        }
+      }
+    ]
+  },
   "connections": {
     "Cuando se llama como Tool": {
       "main": [
@@ -407,52 +411,21 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "DmDkwn1BYxqupOyd",
+    "callerPolicy": "workflowsFromSameOwner"
   },
-  "staticData": null,
+  "versionId": "b11c1654-a37c-4b3c-b0bf-6b01c88e5a69",
   "meta": {
-    "templateCredsSetupCompleted": true
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
   },
   "nodeGroups": [],
-  "pinData": {
-    "Cuando se llama como Tool": [
-      {
-        "json": {
-          "latitude": 42.1197,
-          "longitude": -8.8489
-        }
-      }
-    ]
-  },
-  "versionId": "9b79ebca-d4e2-4c3c-82d1-bedc0c1de66b",
-  "activeVersionId": "2fb34990-7484-4063-b952-1e4a63aabfde",
-  "versionCounter": 232,
-  "triggerCount": 0,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-07-28T09:09:07.879Z",
-      "createdAt": "2026-07-28T09:09:07.879Z",
-      "role": "workflow:owner",
-      "workflowId": "7ElRP6UQ9bHVsElH",
-      "projectId": "vrzjQQtxE5ouFXJ5",
-      "project": {
-        "updatedAt": "2026-07-10T10:04:26.046Z",
-        "createdAt": "2026-07-10T10:00:38.789Z",
-        "id": "vrzjQQtxE5ouFXJ5",
-        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": null,
-    "description": null
-  }
+  "id": "7ElRP6UQ9bHVsElH",
+  "tags": []
 }

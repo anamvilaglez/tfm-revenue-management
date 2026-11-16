@@ -1,0 +1,752 @@
+{
+  "name": "Subflujo - Datos Externos",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "fecha_inicio"
+            },
+            {
+              "name": "periodo"
+            },
+            {
+              "name": "Month"
+            },
+            {
+              "name": "Year"
+            },
+            {
+              "name": "hotelConfig",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "2ee3fda3-7fae-4ffd-9f52-917e3200ef19",
+      "typeVersion": 1.1,
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -7072,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/cache_clima",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "hotel_id",
+              "value": "=eq.{{ $('Start').first().json.hotelConfig?.hotel_id || 'default_hotel' }}"
+            },
+            {
+              "name": "fecha",
+              "value": "=eq.{{ $now.toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -6848,
+        1152
+      ],
+      "id": "3946ba8b-1cda-429d-8dec-4612e2ef1227",
+      "name": "Buscar Cache Clima",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond_clima",
+              "leftValue": "={{ Array.isArray($json) ? $json.length : ($json.id ? 1 : 0) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6640,
+        1152
+      ],
+      "id": "5eb47750-a54e-4cc6-8db0-1de17a46bff8",
+      "name": "Existe Cache Clima"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OPENMETEO_URL || 'https://api.open-meteo.com/v1/forecast' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "={{ $('Start').first().json.hotelConfig?.ubicacion?.lat || 42.1221 }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ $('Start').first().json.hotelConfig?.ubicacion?.lon || -8.8488 }}"
+            },
+            {
+              "name": "current",
+              "value": "temperature_2m,relative_humidity_2m,weather_code"
+            },
+            {
+              "name": "daily",
+              "value": "temperature_2m_max,temperature_2m_min,precipitation_sum"
+            },
+            {
+              "name": "timezone",
+              "value": "Europe/Madrid"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -6400,
+        1264
+      ],
+      "id": "b045d80f-4f26-4864-b11c-aea9d9a1f143",
+      "name": "Obtener Clima",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond_clima_ok",
+              "leftValue": "={{ $json.daily?.time ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6176,
+        1264
+      ],
+      "id": "f86d8936-8f2d-459f-9555-c85f9533651b",
+      "name": "Clima Valido"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/cache_clima",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  hotel_id: $('Start').first().json.hotelConfig?.hotel_id || 'default_hotel',\n  fecha: $now.toFormat('yyyy-MM-dd'),\n  data: $json\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -5952,
+        1360
+      ],
+      "id": "b79af0ec-80fc-4721-b679-85ac3e99248e",
+      "name": "Guardar Cache Clima"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ejecutado = (n) => { try { return $(n).isExecuted; } catch (e) { return false; } };\n\nconst startData = $('Start').first().json || {};\nconst hotelConfig = startData.hotelConfig || {};\n\n// Fuente 1: fila de cache de hoy en Supabase (HTTP devuelve una fila = un item)\nconst fila = $('Buscar Cache Clima').first()?.json;\nconst filaCache = Array.isArray(fila) ? fila[0] : fila;\n// Fuente 2: llamada en vivo a Open-Meteo (solo existe si hubo cache miss)\nconst httpClima = ejecutado('Obtener Clima') ? $('Obtener Clima').first()?.json : null;\n\nlet rawClima = {};\nif (filaCache?.data?.daily) {\n  rawClima = filaCache.data;\n} else if (httpClima?.daily) {\n  rawClima = httpClima;\n}\n\nconst climaData = rawClima.daily || {};\nlet climaPorFecha = {};\nlet usando_clima_antiguo = false;\nlet advertenciaClima = null;\n\nif (climaData.time && Array.isArray(climaData.time)) {\n  climaData.time.forEach((fecha, i) => {\n    climaPorFecha[fecha] = {\n      temp_max: climaData.temperature_2m_max?.[i] ?? null,\n      temp_min: climaData.temperature_2m_min?.[i] ?? null,\n      precipitacion: climaData.precipitation_sum?.[i] ?? null\n    };\n  });\n} else {\n  usando_clima_antiguo = true;\n  advertenciaClima = 'Datos de clima en vivo no disponibles.';\n}\n\nreturn [{\n  json: {\n    climaPorFecha,\n    usando_clima_antiguo,\n    advertenciaClima,\n    latitude: hotelConfig.ubicacion?.lat ?? 42.1221,\n    longitude: hotelConfig.ubicacion?.lon ?? -8.8488,\n    hotelConfig\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5728,
+        1152
+      ],
+      "id": "3ae74aa9-903f-496c-bccc-92f0244a6b35",
+      "name": "Preparar Clima"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/cache_competencia",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "hotel_id",
+              "value": "=eq.{{ $('Start').first().json.hotelConfig?.hotel_id || 'default_hotel' }}"
+            },
+            {
+              "name": "fecha",
+              "value": "=eq.{{ $now.toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -5520,
+        1152
+      ],
+      "id": "0c30761a-2bfc-4966-8360-f6fac86b5d5b",
+      "name": "Buscar Cache Competencia",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond_comp",
+              "leftValue": "={{ Array.isArray($json) ? $json.length : ($json.id ? 1 : 0) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5296,
+        1152
+      ],
+      "id": "0dc89a09-384b-48b4-ad56-3da8e51f55e6",
+      "name": "Existe Cache Competencia"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TRIPADV_URL || 'https://tripadvisor16.p.rapidapi.com/api/v1/hotels/searchHotelsByLocation' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "={{ $('Preparar Clima').first().json.latitude }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ $('Preparar Clima').first().json.longitude }}"
+            },
+            {
+              "name": "pageNumber",
+              "value": "1"
+            },
+            {
+              "name": "currencyCode",
+              "value": "EUR"
+            },
+            {
+              "name": "checkIn",
+              "value": "={{ $now.plus({days: 1}).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "checkOut",
+              "value": "={{ $now.plus({days: 2}).toFormat('yyyy-MM-dd') }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-rapidapi-host",
+              "value": "tripadvisor16.p.rapidapi.com"
+            },
+            {
+              "name": "x-rapidapi-key",
+              "value": "={{ $env.RAPIDAPI_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -5072,
+        1264
+      ],
+      "id": "626a2fa4-3f71-46a4-b614-e676e15d8f7e",
+      "name": "Obtener Competencia",
+      "alwaysOutputData": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond_comp_ok",
+              "leftValue": "={{ Array.isArray($json.data?.data) && $json.data.data.length > 0 ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4848,
+        1264
+      ],
+      "id": "e96b697a-977f-4124-a38a-2356c97d43ea",
+      "name": "Competencia Valida"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/cache_competencia",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  hotel_id: $('Start').first().json.hotelConfig?.hotel_id || 'default_hotel',\n  fecha: $now.toFormat('yyyy-MM-dd'),\n  data: $json\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4640,
+        1360
+      ],
+      "id": "e29481d1-f4ad-4a37-9b2c-81f6b8234da7",
+      "name": "Guardar Cache Competencia"
+    },
+    {
+      "parameters": {
+        "jsCode": "const climaNode = $('Preparar Clima').first()?.json || {};\nconst startData = $('Start').first()?.json || {};\nconst hotelConfig = climaNode.hotelConfig || startData.hotelConfig || {};\n\n// 1. Detección de error HTTP 429 o fallo en la API\nconst raw = $json;\nconst esError429 = raw.status === 429 || raw.statusCode === 429 || raw.error?.status === 429;\nconst inputData = raw.data?.data || raw.data || [];\n\nlet hotelesProcesados = [];\nlet advertencia = null;\n\n// Backup local estático\nconst BACKUP_COMPSET = [\n  { nombre: \"Parador de Baiona\", rating: 4.6, numResenas: 2150, precio: 145, esTravellerChoice: true },\n  { nombre: \"Hotel Rompeolas\", rating: 4.2, numResenas: 480, precio: 95, esTravellerChoice: false },\n  { nombre: \"Pazo de Mendoza\", rating: 4.5, numResenas: 620, precio: 120, esTravellerChoice: false },\n  { nombre: \"Hotel Bahia Bayona\", rating: 4.1, numResenas: 390, precio: 88, esTravellerChoice: false }\n];\n\nif (!esError429 && Array.isArray(inputData) && inputData.length > 0) {\n  hotelesProcesados = inputData\n    .map(h => ({\n      nombre: (h.title || h.nombre || '').replace(/^\\d+\\.\\s*/, ''),\n      rating: Number(h.bubbleRating?.rating ?? h.rating ?? null),\n      numResenas: h.bubbleRating?.count\n        ? Number(String(h.bubbleRating.count).replace(/[(),]/g, ''))\n        : (h.numResenas ?? 0),\n      precio: Number(h.priceForDisplay ? String(h.priceForDisplay).replace(/[^\\d]/g, '') : h.precio) || null,\n      esTravellerChoice: h.badge?.type === 'TRAVELLER_CHOICE' || h.esTravellerChoice === true\n    }))\n    .filter(h => h.rating !== null && !isNaN(h.rating));\n} else {\n  hotelesProcesados = BACKUP_COMPSET;\n  advertencia = \"Límite de API alcanzado (Error 429). Se están utilizando datos de respaldo (backup).\";\n}\n\n// 2. Métricas\nconst ratingMedio = hotelesProcesados.length\n  ? Number((hotelesProcesados.reduce((acc, h) => acc + h.rating, 0) / hotelesProcesados.length).toFixed(2))\n  : null;\n\nconst hotelesConPrecio = hotelesProcesados.filter(h => h.precio !== null);\nconst precioMedio = hotelesConPrecio.length\n  ? Number((hotelesConPrecio.reduce((acc, h) => acc + h.precio, 0) / hotelesConPrecio.length).toFixed(2))\n  : null;\n\nconst competenciaResumen = {\n  hoteles: hotelesProcesados,\n  ratingMedioZona: ratingMedio,\n  precioMedioZona: precioMedio,\n  numCompetidores: hotelesProcesados.length,\n  es_backup: esError429 || !inputData.length,\n  nota: esError429 || !inputData.length\n    ? \"⚠️ Datos de respaldo (backup local) por límite en API externa (429).\"\n    : \"Datos en tiempo real (TripAdvisor API).\",\n  fecha_datos: new Date().toISOString().split('T')[0]\n};\n\nreturn [{\n  json: {\n    climaPorFecha: climaNode.climaPorFecha || {},\n    competenciaResumen,\n    hotelConfig\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4416,
+        1152
+      ],
+      "id": "7bb99519-1a27-481d-83bb-e981a9289f65",
+      "name": "Preparar Competencia"
+    },
+    {
+      "parameters": {
+        "url": "=https://date.nager.at/api/v3/PublicHolidays/{{ $now.year }}/ES",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4192,
+        1152
+      ],
+      "id": "7db67b27-c810-4a9b-9031-b21f177e3df5",
+      "name": "Obtener Festivos API",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const compNode = $('Preparar Competencia').first().json || {};\nconst hotelConfig = compNode.hotelConfig || $('Start').first().json.hotelConfig || {};\nconst ubicacion = hotelConfig.ubicacion || {};\nconst codigoComunidad = ubicacion.codigo_region || 'ES-GA';\nconst diasPeriodo = parseInt(hotelConfig.dias_vista_default || 14);\n\nlet itemsHolidays = [];\ntry {\n  itemsHolidays = $input.all().map(i => i.json);\n} catch (e) {\n  itemsHolidays = [];\n}\n\nconst festivosSet = new Set();\nitemsHolidays.forEach(h => {\n  if (h && h.date) {\n    if (!h.counties || h.counties.includes(codigoComunidad)) {\n      festivosSet.add(h.date);\n    }\n  }\n});\n\nif (Array.isArray(hotelConfig.festivos_locales)) {\n  hotelConfig.festivos_locales.forEach(f => festivosSet.add(f));\n}\n\nfunction addDays(date, days) {\n  const result = new Date(date);\n  result.setUTCDate(result.getUTCDate() + Number(days));\n  return result;\n}\n\nfunction toISODate(d) {\n  const anio = d.getUTCFullYear();\n  const mes = String(d.getUTCMonth() + 1).padStart(2, '0');\n  const dia = String(d.getUTCDate()).padStart(2, '0');\n  return `${anio}-${mes}-${dia}`;\n}\n\nconst ahora = new Date();\nconst fechaBase = new Date(Date.UTC(ahora.getFullYear(), ahora.getMonth(), ahora.getDate()));\n\nconst rangosVacaciones = hotelConfig.rangos_vacaciones || [\n  { inicio: '-06-22', fin: '-09-10' },\n  { inicio: '-12-22', fin: '-01-07' }\n];\n\nfunction esVacacionesEscolares(fechaISO) {\n  const mmdd = fechaISO.slice(5);\n  return rangosVacaciones.some(r => {\n    if (r.inicio > r.fin) {\n      return mmdd >= r.inicio.slice(1) || mmdd <= r.fin.slice(1);\n    }\n    return mmdd >= r.inicio.slice(1) && mmdd <= r.fin.slice(1);\n  });\n}\n\nconst calendarioSerie = Array.from({ length: diasPeriodo }, (_, idx) => {\n  const dias_vista = idx + 1;\n  const fechaObj = addDays(fechaBase, dias_vista);\n  const fechaISO = toISODate(fechaObj);\n\n  return {\n    fecha: fechaISO,\n    dias_vista,\n    es_vacaciones_escolares: esVacacionesEscolares(fechaISO),\n    es_festivo: festivosSet.has(fechaISO) ? 1 : 0\n  };\n});\n\nreturn [{\n  json: {\n    calendarioSerie,\n    climaPorFecha: compNode.climaPorFecha || {},\n    competenciaResumen: compNode.competenciaResumen || null,\n    hotelConfig\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3968,
+        1152
+      ],
+      "id": "3f7a05c8-4198-4410-8639-bad83f5de181",
+      "name": "Obtener Vacaciones Escolares"
+    },
+    {
+      "parameters": {
+        "jsCode": "const vacData = $('Obtener Vacaciones Escolares').first().json || {};\nconst climaPorFecha = vacData.climaPorFecha || {};\nconst competenciaResumen = vacData.competenciaResumen || null;\nconst calendarioSerie = vacData.calendarioSerie || [];\nconst hotelConfig = vacData.hotelConfig || $('Start').first().json.hotelConfig || {};\nconst reglasPricing = hotelConfig.reglas_pricing || {};\n\nconst factorFestivo = Number(reglasPricing.bonus_festivo ?? 1.10) - 1;\nconst factorVacaciones = Number(reglasPricing.bonus_vacaciones ?? 1.05) - 1;\n\nconst REGLAS_CLIMA = [\n  { cumple: (c) => c && c.precipitacion < 1 && c.temp_max > 20, ajuste_pct: 0.05, motivo: 'buen tiempo previsto' },\n  { cumple: (c) => c && c.precipitacion > 5, ajuste_pct: -0.05, motivo: 'mal tiempo previsto' }\n];\n\nfunction calcularAjuste(fechaISO, es_vacaciones, es_festivo) {\n  let ajuste = 0;\n  const motivos = [];\n\n  if (es_vacaciones) {\n    ajuste += factorVacaciones;\n    motivos.push(`vacaciones escolares (${(factorVacaciones * 100).toFixed(0)}%)`);\n  }\n\n  if (es_festivo) {\n    ajuste += factorFestivo;\n    motivos.push(`festivo (${(factorFestivo * 100).toFixed(0)}%)`);\n  }\n\n  const clima = climaPorFecha[fechaISO];\n  if (clima) {\n    const regla = REGLAS_CLIMA.find(r => r.cumple(clima));\n    if (regla) {\n      ajuste += regla.ajuste_pct;\n      motivos.push(regla.motivo);\n    }\n  }\n\n  const maxSubida = Number(reglasPricing.techo_ajuste ?? 1.35) - 1;\n  const maxBajada = Number(reglasPricing.suelo_ajuste ?? 0.75) - 1;\n\n  ajuste = Math.max(maxBajada, Math.min(maxSubida, ajuste));\n\n  return {\n    ajuste_pct: Number(ajuste.toFixed(3)),\n    motivo_ajuste: motivos.join(', ') || 'sin ajuste'\n  };\n}\n\nconst contextoExternoSerie = calendarioSerie.map(dia => {\n  const { ajuste_pct, motivo_ajuste } = calcularAjuste(dia.fecha, dia.es_vacaciones_escolares, dia.es_festivo);\n  return {\n    fecha: dia.fecha,\n    dias_vista: dia.dias_vista,\n    es_vacaciones_escolares: dia.es_vacaciones_escolares,\n    es_festivo: dia.es_festivo,\n    ajuste_pct,\n    motivo_ajuste,\n    clima: dia.fecha in climaPorFecha ? climaPorFecha[dia.fecha] : null\n  };\n});\n\nreturn [{\n  json: {\n    contextoExternoSerie,\n    competenciaResumen,\n    hotelConfig\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3760,
+        1152
+      ],
+      "id": "35a6cba6-6c38-4e81-ba7a-7827968b3767",
+      "name": "Preparacion Datos Externos"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7add58bd-8fdc-473c-8b66-47fa6d94f778",
+              "name": "contextoExternoSerie",
+              "value": "={{ $json.contextoExternoSerie }}",
+              "type": "array"
+            },
+            {
+              "id": "d03ff4ac-0a1e-4655-a951-4c63b04147a8",
+              "name": "competenciaResumen",
+              "value": "={{ $json.competenciaResumen }}",
+              "type": "object"
+            },
+            {
+              "id": "1168fed4-3286-41e6-9c0e-2902ab5c7c4f",
+              "name": "hotelConfig",
+              "value": "={{ $json.hotelConfig }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3536,
+        1152
+      ],
+      "id": "31214e98-5156-4897-84e4-061d55d72f3b",
+      "name": "Return"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cache Clima",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cache Clima": {
+      "main": [
+        [
+          {
+            "node": "Existe Cache Clima",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe Cache Clima": {
+      "main": [
+        [
+          {
+            "node": "Preparar Clima",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Obtener Clima",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Clima": {
+      "main": [
+        [
+          {
+            "node": "Clima Valido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clima Valido": {
+      "main": [
+        [
+          {
+            "node": "Guardar Cache Clima",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Clima",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Cache Clima": {
+      "main": [
+        [
+          {
+            "node": "Preparar Clima",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Clima": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cache Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cache Competencia": {
+      "main": [
+        [
+          {
+            "node": "Existe Cache Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe Cache Competencia": {
+      "main": [
+        [
+          {
+            "node": "Preparar Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Obtener Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Competencia": {
+      "main": [
+        [
+          {
+            "node": "Competencia Valida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competencia Valida": {
+      "main": [
+        [
+          {
+            "node": "Guardar Cache Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Cache Competencia": {
+      "main": [
+        [
+          {
+            "node": "Preparar Competencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Competencia": {
+      "main": [
+        [
+          {
+            "node": "Obtener Festivos API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Festivos API": {
+      "main": [
+        [
+          {
+            "node": "Obtener Vacaciones Escolares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Vacaciones Escolares": {
+      "main": [
+        [
+          {
+            "node": "Preparacion Datos Externos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparacion Datos Externos": {
+      "main": [
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "DmDkwn1BYxqupOyd",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "d01db4a9-3bb5-4269-81bb-700196d16a8b",
+  "meta": {
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
+  },
+  "nodeGroups": [],
+  "id": "pdWAPjZaXKtqE10K",
+  "tags": []
+}

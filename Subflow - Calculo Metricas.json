@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-10-09T09:56:15.627Z",
-  "createdAt": "2026-07-16T07:18:31.277Z",
-  "id": "hQg0ASWJthKM1tPI",
   "name": "Subflow - Calculo Metricas",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -49,6 +43,7 @@
       "name": "Calcular Metricas"
     }
   ],
+  "pinData": {},
   "connections": {
     "Cuando se llama como Tool": {
       "main": [
@@ -62,40 +57,20 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "DmDkwn1BYxqupOyd",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "meta": null,
-  "nodeGroups": [],
-  "pinData": {},
   "versionId": "637beef7-6450-4544-bb6c-7841c943c61f",
-  "activeVersionId": "637beef7-6450-4544-bb6c-7841c943c61f",
-  "versionCounter": 68,
-  "triggerCount": 0,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-07-16T07:18:31.282Z",
-      "createdAt": "2026-07-16T07:18:31.282Z",
-      "role": "workflow:owner",
-      "workflowId": "hQg0ASWJthKM1tPI",
-      "projectId": "vrzjQQtxE5ouFXJ5",
-      "project": {
-        "updatedAt": "2026-07-10T10:04:26.046Z",
-        "createdAt": "2026-07-10T10:00:38.789Z",
-        "id": "vrzjQQtxE5ouFXJ5",
-        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "Version 637beef7",
-    "description": ""
-  }
+  "meta": {
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
+  },
+  "nodeGroups": [],
+  "id": "hQg0ASWJthKM1tPI",
+  "tags": []
 }

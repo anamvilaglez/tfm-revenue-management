@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-10-17T05:01:28.265Z",
-  "createdAt": "2026-07-16T07:12:10.460Z",
-  "id": "pQrhTGZeqy1tacvc",
   "name": "Subflow - Generar Informe",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -35,6 +29,7 @@
       "name": "Construir Informe HTML"
     }
   ],
+  "pinData": {},
   "connections": {
     "Cuando se llama como Subflujo": {
       "main": [
@@ -48,40 +43,16 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "staticData": null,
-  "meta": null,
-  "nodeGroups": [],
-  "pinData": {},
   "versionId": "c9130dd4-f43c-46fc-946a-7c87fbeda74c",
-  "activeVersionId": "c9130dd4-f43c-46fc-946a-7c87fbeda74c",
-  "versionCounter": 121,
-  "triggerCount": 0,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-07-16T07:12:10.522Z",
-      "createdAt": "2026-07-16T07:12:10.522Z",
-      "role": "workflow:owner",
-      "workflowId": "pQrhTGZeqy1tacvc",
-      "projectId": "vrzjQQtxE5ouFXJ5",
-      "project": {
-        "updatedAt": "2026-07-10T10:04:26.046Z",
-        "createdAt": "2026-07-10T10:00:38.789Z",
-        "id": "vrzjQQtxE5ouFXJ5",
-        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "Version c9130dd4",
-    "description": ""
-  }
+  "meta": {
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
+  },
+  "nodeGroups": [],
+  "id": "pQrhTGZeqy1tacvc",
+  "tags": []
 }

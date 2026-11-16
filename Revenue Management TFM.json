@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-10-26T13:52:54.654Z",
-  "createdAt": "2026-10-07T08:27:40.873Z",
-  "id": "DmDkwn1BYxqupOyd",
   "name": "Revenue Management TFM",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {},
@@ -338,7 +332,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const texto = $input.item.json.output || $input.item.json.text || '';\nconst hoy = new Date().toISOString().split('T')[0];\nconst tareas = [];\n\nfunction limpiarTexto(t) {\n  return t.replace(/\\*\\*/g, '').replace(/^[-\\*\\d\\.\\s\\[\\]x]+/, '').trim();\n}\n\n// -----------------------------------------------------------------\n// 1. EXTRAER CHECKLIST DE EJECUCIÓN (Tareas directas para el turno)\n// -----------------------------------------------------------------\nconst matchChecklist = texto.match(/Check-list de Ejecución[\\s\\S]*?(?=(?:##|\\n\\n\\n|$))/i);\nif (matchChecklist) {\n  const lineas = matchChecklist[0].split('\\n');\n  lineas.forEach(linea => {\n    const l = linea.trim();\n    // Captura líneas numeradas: \"1. [PMS / CM]: ...\" o viñetas\n    if (/^(?:\\d+[\\.\\)]|[-*])\\s+/.test(l)) {\n      const limpia = limpiarTexto(l);\n      if (limpia.length > 8 && !limpia.toLowerCase().includes('lista numerada')) {\n        tareas.push({\n          json: {\n            titulo: `✅ [Turno] ${limpia}`,\n            vencimiento: `${hoy}T20:00:00.000Z`,\n            notas: `Checklist diario de Revenue Management generado el ${hoy}.`\n          }\n        });\n      }\n    }\n  });\n}\n\n// -----------------------------------------------------------------\n// 2. EXTRAER ÓRDENES DE CARGA POR PERIODO Y CANAL (Tarifas y MinLOS)\n// -----------------------------------------------------------------\nconst bloquesPeriodo = texto.split(/###\\s+Periodo:/i);\n\n// Omitimos el primer fragmento (cabecera antes del primer periodo)\nfor (let i = 1; i < bloquesPeriodo.length; i++) {\n  const bloque = bloquesPeriodo[i];\n  const nombrePeriodo = (bloque.split('\\n')[0] || '').replace(/\\*\\*/g, '').trim();\n\n  // Buscar órdenes específicas por canal\n  const canales = [\n    { key: 'Web Propia / Motor', etiqueta: 'Web' },\n    { key: 'OTAs', etiqueta: 'OTAs' },\n    { key: 'Canal Directo', etiqueta: 'Directo' }\n  ];\n\n  canales.forEach(canal => {\n    const regexCanal = new RegExp(`${canal.key}[\\\\s\\\\S]*?(?=(?:- \\\\*\\\\*|###|##|$))`, 'i');\n    const matchCanal = bloque.match(regexCanal);\n\n    if (matchCanal) {\n      const contenidoCanal = matchCanal[0];\n      const tarifaMatch = contenidoCanal.match(/Tarifa [^:]*:\\s*([^\\n]+)/i);\n      const restriccionMatch = contenidoCanal.match(/Restricci[oó]n:\\s*([^\\n]+)/i);\n\n      const tarifa = tarifaMatch ? limpiarTexto(tarifaMatch[1]) : '';\n      const restriccion = restriccionMatch ? limpiarTexto(restriccionMatch[1]) : '';\n\n      if (tarifa || restriccion) {\n        let detalle = [];\n        if (tarifa) detalle.push(`Tarifa: ${tarifa}`);\n        if (restriccion) detalle.push(`Restricción: ${restriccion}`);\n\n        tareas.push({\n          json: {\n            titulo: `🏨 [${canal.etiqueta} | ${nombrePeriodo}] ${detalle.join(' · ')}`,\n            vencimiento: `${hoy}T18:00:00.000Z`,\n            notas: `Instrucción de carga para ${canal.key} en el periodo ${nombrePeriodo}.\\n${contenidoCanal.trim()}`\n          }\n        });\n      }\n    }\n  });\n}\n\n// -----------------------------------------------------------------\n// 3. EXTRAER REGLAS DE YIELDING / TRIGGERS ACTIVOS\n// -----------------------------------------------------------------\nconst matchYielding = texto.match(/Reglas Automatizadas de Yielding[\\s\\S]*?(?=(?:##|$))/i);\nif (matchYielding) {\n  const lineasYield = matchYielding[0].split('\\n');\n  let triggerActual = '';\n\n  lineasYield.forEach(l => {\n    const trimmed = l.trim();\n    if (trimmed.toLowerCase().includes('trigger')) {\n      triggerActual = limpiarTexto(trimmed);\n    } else if (trimmed.toLowerCase().includes('acción inmediata:')) {\n      const accion = limpiarTexto(trimmed.split(/acción inmediata:/i)[1]);\n      if (accion) {\n        tareas.push({\n          json: {\n            titulo: `⚡ [Alerta Yield] ${triggerActual ? triggerActual + ': ' : ''}${accion}`,\n            vencimiento: `${hoy}T21:00:00.000Z`,\n            notas: `Regla de yielding a supervisar en el PMS durante el turno de hoy (${hoy}).`\n          }\n        });\n      }\n    }\n  });\n}\n\n// Si por alguna razón no extrajo nada, devuelve aviso\nreturn tareas.length ? tareas : [{ json: { titulo: \"Revisar informe de Revenue diario\", vencimiento: `${hoy}T20:00:00.000Z`, notas: \"No se pudieron desglosar las tareas automáticamente.\" } }];"
+        "jsCode": "const texto = $input.item.json.output || $input.item.json.text || '';\nconst hoy = new Date().toISOString().split('T')[0];\nconst tareas = [];\n\nfunction limpiarTexto(t) {\n  return t.replace(/\\*\\*/g, '').replace(/\\*/g, '').replace(/^[-\\*\\d\\.\\s\\[\\]x]+/, '').trim();\n}\n\n// 1. EXTRAER LISTA DE COMPROBACIÓN OPERATIVA\nconst matchChecklist = texto.match(/(?:Lista de Comprobación Operativa|Check-list de Ejecución)[\\s\\S]*?(?=(?:##|\\n\\n\\n|$))/i);\nif (matchChecklist) {\n  const lineas = matchChecklist[0].split('\\n');\n  lineas.forEach(linea => {\n    const l = linea.trim();\n    if (/^(?:\\d+[\\.\\)]|[-*])\\s+/.test(l)) {\n      const limpia = limpiarTexto(l);\n      if (limpia.length > 8 && !limpia.toLowerCase().includes('lista numerada')) {\n        tareas.push({\n          json: {\n            titulo: `✅ [Turno] ${limpia}`,\n            vencimiento: `${hoy}T20:00:00.000Z`,\n            notas: `Checklist diario de Revenue Management generado el ${hoy}.`\n          }\n        });\n      }\n    }\n  });\n}\n\n// 2. EXTRAER ÓRDENES DE CARGA POR VENTANA Y CANAL\nconst bloquesVentana = texto.split(/###\\s+(?:Ventana\\s*\\d+|Periodo):/i);\n\nfor (let i = 1; i < bloquesVentana.length; i++) {\n  const bloque = bloquesVentana[i];\n  const nombreVentana = limpiarTexto(bloque.split('\\n')[0] || '');\n\n  const canales = [\n    { key: 'Web Propia / Motor', regex: /Web Propia \\/ Motor[\\s\\S]*?(?=(?:- \\*\\*|###|##|$))/i, etiqueta: 'Web' },\n    { key: 'OTAs', regex: /OTAs[^\\n]*[\\s\\S]*?(?=(?:- \\*\\*|###|##|$))/i, etiqueta: 'OTAs' },\n    { key: 'Canal Directo', regex: /Canal Directo[^\\n]*[\\s\\S]*?(?=(?:- \\*\\*|###|##|$))/i, etiqueta: 'Directo' }\n  ];\n\n  canales.forEach(canal => {\n    const matchCanal = bloque.match(canal.regex);\n    if (matchCanal) {\n      const contenidoCanal = matchCanal[0];\n      const tarifaMatch = contenidoCanal.match(/Tarifa (?:recomendada|telefónica)[^:]*:\\s*([^\\n]+)/i);\n      const restriccionMatch = contenidoCanal.match(/Restricci[oó]n:\\s*([^\\n]+)/i);\n\n      const tarifa = tarifaMatch ? limpiarTexto(tarifaMatch[1]) : '';\n      const restriccion = restriccionMatch ? limpiarTexto(restriccionMatch[1]) : '';\n\n      if (tarifa || restriccion) {\n        const detalle = [];\n        if (tarifa) detalle.push(`Tarifa: ${tarifa}`);\n        if (restriccion) detalle.push(`Restricción: ${restriccion}`);\n\n        tareas.push({\n          json: {\n            titulo: `🏨 [${canal.etiqueta} | ${nombreVentana}] ${detalle.join(' · ')}`,\n            vencimiento: `${hoy}T18:00:00.000Z`,\n            notas: `Instrucción de carga para ${canal.key} en ${nombreVentana}.\\n${contenidoCanal.trim()}`\n          }\n        });\n      }\n    }\n  });\n}\n\n// 3. EXTRAER REGLAS DINÁMICAS DE YIELDING\nconst matchYielding = texto.match(/Reglas (?:Dinámicas|Automatizadas) de Yielding[\\s\\S]*?(?=(?:##|$))/i);\nif (matchYielding) {\n  const lineasYield = matchYielding[0].split('\\n');\n  let eventoActual = '';\n\n  lineasYield.forEach(l => {\n    const trimmed = l.trim();\n    if (/^-\\s+\\*\\*[^*]+:\\*\\*/.test(trimmed)) {\n      eventoActual = limpiarTexto(trimmed).replace(':', '');\n    } else if (/acci[oó]n(?:\\s+inmediata)?:/i.test(trimmed)) {\n      const accion = limpiarTexto(trimmed.split(/acci[oó]n(?:\\s+inmediata)?:/i)[1]);\n      if (accion) {\n        tareas.push({\n          json: {\n            titulo: `⚡ [Alerta Yield] ${eventoActual ? eventoActual + ': ' : ''}${accion}`,\n            vencimiento: `${hoy}T21:00:00.000Z`,\n            notas: `Regla de yielding a supervisar en el PMS durante el turno de hoy (${hoy}).`\n          }\n        });\n      }\n    }\n  });\n}\n\nreturn tareas.length ? tareas : [{ json: { titulo: \"Revisar informe de Revenue diario\", vencimiento: `${hoy}T20:00:00.000Z`, notas: \"No se pudieron desglosar las tareas automáticamente.\" } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -351,7 +345,7 @@
     },
     {
       "parameters": {
-        "task": "=@default",
+        "task": "TFBOWVREeXE4VExMMFAzbg",
         "title": "={{ $json.titulo }}",
         "additionalFields": {
           "dueDate": "={{ $json.vencimiento }}",
@@ -386,8 +380,8 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        -7008,
-        -144
+        -7024,
+        -160
       ],
       "id": "3e34fd94-20f5-44da-b10e-87580aa6e852",
       "name": "Schedule Trigger"
@@ -831,7 +825,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "=Aquí tienes los datos del sistema: {{ JSON.stringify($json.calculo_metricas) }}\n\nPeriodos históricos similares recuperados por similitud de características (no generados por IA): {{ $json.contexto_historico }}\n\nHOTEL: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.nombre || 'Hotel' }} (Capacidad: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.capacidad_total || 75 }} habitaciones)",
+        "text": "=Aquí tienes los datos del sistema: {{ JSON.stringify($json.calculo_metricas) }}\n\nPeriodos históricos similares recuperados por similitud de características (no generados por IA): {{ $json.contexto_historico }}\n\n=HOTEL: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.nombre || 'Hotel' }} (Capacidad: {{ $('Call \\'Subflow - Calculo Metricas\\'').first().json.hotelConfig?.capacidad_total || 75 }} habs)\n\nTOTAL PERIODO: {{ JSON.stringify($json.calculo_metricas.total) }}\n\nHISTORICO SIMILAR: {{ $json.contexto_historico }}\n\nDIARIO (14 DÍAS):\n{{ JSON.stringify($json.calculo_metricas.diario.map(d => ({\n  fecha: d.fecha,\n  ocupacion: d.ocupacion,\n  ingresos: d.ingresos,\n  comparativas: d.comparativas,\n  pickup_7: d.pickup_pace?.pickup_7,\n  riesgos: d.riesgos,\n  perfil: { canal: d.perfil_demanda?.canal, tipo: d.perfil_demanda?.tipo, pais: d.perfil_demanda?.pais },\n  precios_canal: {\n    Web: d.pricing_dinamico?.pricing_por_canal?.Web?.adr_observado ?? 'SIN DATO',\n    Booking: d.pricing_dinamico?.pricing_por_canal?.Booking?.adr_observado ?? 'SIN DATO',\n    Expedia: d.pricing_dinamico?.pricing_por_canal?.Expedia?.adr_observado ?? 'SIN DATO',\n    Telefono: d.pricing_dinamico?.pricing_por_canal?.['Teléfono']?.adr_observado ?? 'SIN DATO',\n    WalkIn: d.pricing_dinamico?.pricing_por_canal?.['Walk-in']?.adr_observado ?? 'SIN DATO'\n  },\n  contexto: d.contexto_externo\n}))) }}",
         "messages": {
           "messageValues": [
             {
@@ -1181,17 +1175,6 @@
       "name": "Sticky Note2"
     },
     {
-      "parameters": {},
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -3808,
-        -192
-      ],
-      "typeVersion": 1,
-      "id": "f3bba64a-e0c8-44ab-b606-4d4fee21a5c6",
-      "name": "Sticky Note3"
-    },
-    {
       "parameters": {
         "formTitle": "Lanzamiento Ad-Hoc: Revenue Management",
         "formDescription": "Selecciona los parámetros para generar el informe y plan operativo. Si dejas la fecha vacía, se usará el día de hoy.",
@@ -1280,6 +1263,7 @@
       "name": "Exportar CSV Agente 3"
     }
   ],
+  "pinData": {},
   "connections": {
     "Error Trigger": {
       "main": [
@@ -1675,47 +1659,21 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "DmDkwn1BYxqupOyd",
+    "callerPolicy": "workflowsFromSameOwner"
   },
-  "staticData": {
-    "node:Schedule Trigger": {
-      "recurrenceRules": []
-    }
-  },
+  "versionId": "ff0b7f79-d3b2-4801-8fb6-1dd29f5c1572",
   "meta": {
-    "templateCredsSetupCompleted": true
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8c4092a3de5e4e361bd07c369e7a29266c50cd29cb42eb193cea9eb553053e9a"
   },
   "nodeGroups": [],
-  "pinData": {},
-  "versionId": "c6046ebf-c569-4da8-843e-a7dd8efff46f",
-  "activeVersionId": "c6046ebf-c569-4da8-843e-a7dd8efff46f",
-  "versionCounter": 288,
-  "triggerCount": 2,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-10-07T08:27:40.900Z",
-      "createdAt": "2026-10-07T08:27:40.900Z",
-      "role": "workflow:owner",
-      "workflowId": "DmDkwn1BYxqupOyd",
-      "projectId": "vrzjQQtxE5ouFXJ5",
-      "project": {
-        "updatedAt": "2026-07-10T10:04:26.046Z",
-        "createdAt": "2026-07-10T10:00:38.789Z",
-        "id": "vrzjQQtxE5ouFXJ5",
-        "name": "Ana anamvilaglez@gmail.com <anamvilaglez@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "da64a7fe-a167-4c9c-9637-bb8c1cf5a622"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "Version c6046ebf",
-    "description": ""
-  }
+  "id": "DmDkwn1BYxqupOyd",
+  "tags": []
 }
